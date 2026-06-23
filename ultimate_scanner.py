@@ -254,7 +254,11 @@ class UltimateScanner:
             if bn % 10 == 0: print(f"  Progress: {bn}/{total_batches} batches, {len(all_data)} loaded", flush=True)
             for attempt in range(3):
                 try:
-                    df = yf.download(batch, period='6mo', interval='1d', progress=False, threads=False)
+        try:
+            all_data = fetch_batch_ohlcv(self.universe, days=180)
+        except Exception as e:
+            print(f'❌ Ошибка Alpaca: {e}')
+            all_data = {}
                     for t in batch:
                         try:
                             if isinstance(df.columns, pd.MultiIndex):
@@ -267,7 +271,6 @@ class UltimateScanner:
                     break
                 except:
                     if attempt < 2: time.sleep(2)
-            time.sleep(0.5)
         print(f"\n✅ Loaded: {len(all_data)} tickers")
         if len(all_data) < 50:
             print("⚠️  Few tickers. Loading top popular...")
@@ -275,7 +278,11 @@ class UltimateScanner:
             for t in pop:
                 if t in all_data: continue
                 try:
-                    df = yf.download(t, period='6mo', interval='1d', progress=False)
+        try:
+            all_data = fetch_batch_ohlcv(self.universe, days=180)
+        except Exception as e:
+            print(f'❌ Ошибка Alpaca: {e}')
+            all_data = {}
                     if not df.empty and len(df) >= 100: all_data[t] = df.dropna()
                     time.sleep(0.3)
                 except: continue
