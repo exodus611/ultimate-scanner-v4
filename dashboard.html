@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎯 Ultimate Scanner Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+            color: #fff;
+            min-height: 100vh;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            padding: 30px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+        }
+        .header h1 {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .stat-card {
+            background: rgba(255,255,255,0.1);
+            padding: 20px;
+            border-radius: 15px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .stat-value {
+            font-size: 2.5em;
+            font-weight: bold;
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+        .stat-label {
+            color: #aaa;
+            margin-top: 5px;
+            font-size: 0.9em;
+        }
+        .mode-section {
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 30px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .mode-title {
+            font-size: 1.8em;
+            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .mode-a .mode-title { color: #ff6b6b; }
+        .mode-b .mode-title { color: #ffd93d; }
+        .ticker-card {
+            background: rgba(0,0,0,0.3);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-left: 4px solid;
+            transition: transform 0.3s;
+        }
+        .ticker-card:hover { transform: translateX(10px); }
+        .mode-a .ticker-card { border-left-color: #ff6b6b; }
+        .mode-b .ticker-card { border-left-color: #ffd93d; }
+        .ticker-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+        .ticker-name {
+            font-size: 2em;
+            font-weight: bold;
+        }
+        .ticker-price {
+            font-size: 1.5em;
+            color: #4facfe;
+        }
+        .score-badge {
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
+            padding: 8px 20px;
+            border-radius: 20px;
+            font-weight: bold;
+            font-size: 1.2em;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+        .metric {
+            background: rgba(255,255,255,0.05);
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+        }
+        .metric-label {
+            font-size: 0.8em;
+            color: #aaa;
+            margin-bottom: 5px;
+        }
+        .metric-value {
+            font-size: 1.3em;
+            font-weight: bold;
+        }
+        .signals {
+            margin: 15px 0;
+        }
+        .signal {
+            background: rgba(79, 172, 254, 0.1);
+            padding: 10px 15px;
+            border-radius: 8px;
+            margin: 5px 0;
+            border-left: 3px solid #4facfe;
+        }
+        .ai-analysis {
+            background: rgba(0, 242, 254, 0.05);
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 15px;
+            border: 1px solid rgba(0, 242, 254, 0.2);
+        }
+        .ai-block {
+            margin: 15px 0;
+        }
+        .ai-block h4 {
+            color: #00f2fe;
+            margin-bottom: 8px;
+        }
+        .refresh-btn {
+            background: linear-gradient(45deg, #00f2fe, #4facfe);
+            border: none;
+            padding: 15px 30px;
+            border-radius: 25px;
+            color: white;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            margin: 20px 0;
+            transition: transform 0.3s;
+        }
+        .refresh-btn:hover { transform: scale(1.05); }
+        .loading {
+            text-align: center;
+            padding: 50px;
+            font-size: 1.5em;
+        }
+        .spinner {
+            border: 4px solid rgba(255,255,255,0.1);
+            border-top: 4px solid #4facfe;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎯 Ultimate Scanner Dashboard</h1>
+        <p>Real-time NASDAQ Scanner with AI Analysis</p>
+        <button class="refresh-btn" onclick="loadResults()">🔄 Refresh Results</button>
+        <button class="refresh-btn" onclick="triggerScan()" style="background: linear-gradient(45deg, #ff6b6b, #ffd93d);">🚀 Run New Scan</button>
+    </div>
+    
+    <div id="content">
+        <div class="loading">
+            <div class="spinner"></div>
+            <p>Loading results...</p>
+        </div>
+    </div>
+
+    <script>
+        async function loadResults() {
+            try {
+                const response = await fetch('/api/results');
+                const data = await response.json();
+                renderDashboard(data);
+            } catch (error) {
+                document.getElementById('content').innerHTML = 
+                    '<div class="loading"><p>❌ Error loading results</p></div>';
+            }
+        }
+
+        async function triggerScan() {
+            if (confirm('Start new scan? This will take 10-20 minutes.')) {
+                try {
+                    await fetch('/api/scan', {method: 'POST'});
+                    alert('Scan started! Check back in 10-20 minutes.');
+                } catch (error) {
+                    alert('Error starting scan');
+                }
+            }
+        }
+
+        function renderDashboard(data) {
+            const stats = data.stats || {};
+            const modeA = data.mode_a || [];
+            const modeB = data.mode_b || [];
+            
+            let html = `
+                <div class="stats">
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.universe_size || 0}</div>
+                        <div class="stat-label">Universe Size</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.filtered || 0}</div>
+                        <div class="stat-label">Filtered</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${modeA.length + modeB.length}</div>
+                        <div class="stat-label">Signals Found</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value">${stats.scan_time_sec || 0}s</div>
+                        <div class="stat-label">Scan Time</div>
+                    </div>
+                </div>
+            `;
+            
+            // MODE A
+            html += `<div class="mode-section mode-a">
+                <div class="mode-title">🔴 MODE A: SNIPER</div>
+                <p style="color:#aaa;margin-bottom:20px;">Target: +40% | Position: $2000 | Horizon: 3-7 days</p>`;
+            
+            if (modeA.length === 0) {
+                html += '<p style="text-align:center;color:#aaa;padding:40px;">⚪ No signals today</p>';
+            } else {
+                modeA.forEach(t => {
+                    html += renderTickerCard(t, 'a');
+                });
+            }
+            html += '</div>';
+            
+            // MODE B
+            html += `<div class="mode-section mode-b">
+                <div class="mode-title">🟡 MODE B: TACTICAL</div>
+                <p style="color:#aaa;margin-bottom:20px;">Target: +20% | Position: $1000 | Horizon: 1-3 days</p>`;
+            
+            if (modeB.length === 0) {
+                html += '<p style="text-align:center;color:#aaa;padding:40px;">⚪ No signals today</p>';
+            } else {
+                modeB.forEach(t => {
+                    html += renderTickerCard(t, 'b');
+                });
+            }
+            html += '</div>';
+            
+            html += `<p style="text-align:center;color:#aaa;margin-top:30px;">
+                Last update: ${data.timestamp || 'N/A'}
+            </p>`;
+            
+            document.getElementById('content').innerHTML = html;
+        }
+
+        function renderTickerCard(t, mode) {
+            const signals = t.mode_a_signals || t.mode_b_signals || [];
+            const ai = t.ai || {};
+            
+            let html = `
+                <div class="ticker-card">
+                    <div class="ticker-header">
+                        <div>
+                            <div class="ticker-name">${t.ticker}</div>
+                            <div class="ticker-price">$${t.price}</div>
+                        </div>
+                        <div class="score-badge">Score: ${t.mode_a_score || t.mode_b_score}</div>
+                    </div>
+                    
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-label">Position</div>
+                            <div class="metric-value">${t.position_pct}%</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Discount</div>
+                            <div class="metric-value">${t.discount_pct}%</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">RVOL</div>
+                            <div class="metric-value">${t.rvol}x</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">HOD Pinch</div>
+                            <div class="metric-value">${t.hod_pinch}%</div>
+                        </div>
+                    </div>
+                    
+                    <div class="signals">
+                        ${signals.map(s => `<div class="signal">${s}</div>`).join('')}
+                    </div>
+                    
+                    ${ai.type || ai.physics || ai.signal ? `
+                        <div class="ai-analysis">
+                            <h3 style="color:#00f2fe;margin-bottom:15px;">🧠 AI Analysis</h3>
+                            ${ai.type ? `<div class="ai-block"><h4>🎯 Trade Type</h4><p>${ai.type}</p></div>` : ''}
+                            ${ai.physics ? `<div class="ai-block"><h4>🧠 Physics</h4><p>${ai.physics}</p></div>` : ''}
+                            ${ai.signal ? `<div class="ai-block"><h4>💥 Signal</h4><p>${ai.signal}</p></div>` : ''}
+                        </div>
+                    ` : ''}
+                </div>
+            `;
+            return html;
+        }
+
+        // Auto-refresh every 30 seconds
+        setInterval(loadResults, 30000);
+        loadResults();
+    </script>
+</body>
+</html>

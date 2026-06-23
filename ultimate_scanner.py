@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v4.0 — FULL UNIVERSE (5000+ тикеров)
-MODE A (SNIPER): 2 тикера, +40%, позиция $2000
-MODE B (TACTICAL): 2 тикера, +20%, позиция $1000
+ULTIMATE SCANNER v5.0 — FULL UNIVERSE (5000+ tickers)
+MODE A (SNIPER): 2 tickers, +40%, position $2000
+MODE B (TACTICAL): 2 tickers, +20%, position $1000
 """
 
 import os
@@ -62,40 +62,26 @@ class DeepSeekAnalyzer:
     def analyze(self, ticker: str, data: Dict, mode: str) -> Dict:
         mode_config = CONFIG[f'MODE_{mode}']
         prompt = (
-            f"Ты — Senior Quant Analyst хедж-фонда.\n"
-            f"Проанализируй {ticker} для режима {mode_config['name']}.\n\n"
-            f"## ДАННЫЕ:\n"
-            f"- Цена: ${data.get('price', 'N/A')}\n"
-            f"- Позиция в 6М диапазоне: {data.get('position_pct', 'N/A')}%\n"
-            f"- Скидка от хая: {data.get('discount_pct', 'N/A')}%\n"
-            f"- RVOL сегодня: {data.get('rvol', 'N/A')}x\n"
-            f"- Options unusual calls: {data.get('unusual_calls', 0)}\n"
-            f"- Insider buys (7д): {data.get('insider_buys', 0)} на ${data.get('insider_value', 0)/1000:.0f}k\n"
-            f"- Short Interest: {data.get('short_pct', 'N/A')}%\n"
-            f"- Dark Pool ratio: {data.get('dp_ratio', 'N/A')}%\n"
-            f"- Congressional buys (30д): {data.get('congress_buys', 0)}\n"
-            f"- Earnings surprise: {data.get('earnings_surprise', 'N/A')}%\n"
-            f"- News sentiment: {data.get('news_sentiment', 'N/A')}\n\n"
-            f"## РЕЖИМ {mode_config['name']}:\n"
-            f"- Позиция: ${mode_config['position_size']}\n"
-            f"- Цель: +{mode_config['target_pct']*100:.0f}%\n"
-            f"- Стоп: -{mode_config['stop_pct']*100:.0f}%\n\n"
-            f"## ЗАДАЧА (3 блока, кратко):\n\n"
-            f"### 🎯 ТИП СДЕЛКИ:\n"
-            f"[MODE {mode}] | [Тип: Options Front-Run / Insider Play / Post-Earnings / Momentum / Squeeze / Policy Play]\n\n"
-            f"### 🧠 ФИЗИКА ДВИЖЕНИЯ:\n"
-            f"- Что движет цену\n"
-            f"- Почему именно сейчас\n"
-            f"- Risk/Reward\n\n"
-            f"### 💥 СИГНАЛ:\n"
-            f"[Сила: Flawless/Strong/Moderate/Weak] | [Входить/Наблюдать/Пропустить] | [Стоп: $X] | [Цель: $X]\n\n"
-            f"Будь КРАТКИМ (2-3 предложения на блок)."
+            f"You are a Senior Quant Analyst. Analyze {ticker} for {mode_config['name']} mode.\n\n"
+            f"DATA: Price ${data.get('price','N/A')} | Position {data.get('position_pct','N/A')}% | "
+            f"Discount {data.get('discount_pct','N/A')}% | RVOL {data.get('rvol','N/A')}x | "
+            f"Options unusual {data.get('unusual_calls',0)} | Insider buys {data.get('insider_buys',0)} | "
+            f"Short {data.get('short_pct','N/A')}% | Dark Pool {data.get('dp_ratio','N/A')}% | "
+            f"Congress {data.get('congress_buys',0)} | Earnings {data.get('earnings_surprise','N/A')}% | "
+            f"News {data.get('news_sentiment','N/A')}\n\n"
+            f"MODE: Position ${mode_config['position_size']} | Target +{mode_config['target_pct']*100:.0f}% | "
+            f"Stop -{mode_config['stop_pct']*100:.0f}%\n\n"
+            f"TASK (3 blocks, concise):\n\n"
+            f"### 🎯 TRADE TYPE:\n[MODE {mode}] | [Type: Options Front-Run / Insider Play / Post-Earnings / Momentum / Squeeze / Policy Play]\n\n"
+            f"### 🧠 PHYSICS:\n- What moves price\n- Why now\n- Risk/Reward\n\n"
+            f"### 💥 SIGNAL:\n[Strength: Flawless/Strong/Moderate/Weak] | [Enter/Watch/Skip] | [Stop: $X] | [Target: $X]\n\n"
+            f"Be CONCISE (2-3 sentences per block). Answer in Russian."
         )
         try:
             response = self.client.chat.completions.create(
                 model="deepseek-chat",
                 messages=[
-                    {"role": "system", "content": "Senior Quant Analyst. Отвечай на русском, кратко."},
+                    {"role": "system", "content": "Senior Quant Analyst. Answer in Russian, concise."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=600,
@@ -104,7 +90,7 @@ class DeepSeekAnalyzer:
             text = response.choices[0].message.content
             return self._parse(text)
         except Exception as e:
-            return {'full': f"Ошибка AI: {e}", 'type': '', 'physics': '', 'signal': ''}
+            return {'full': f"AI Error: {e}", 'type': '', 'physics': '', 'signal': ''}
 
     def _parse(self, text: str) -> Dict:
         blocks = {'full': text, 'type': '', 'physics': '', 'signal': ''}
@@ -113,11 +99,11 @@ class DeepSeekAnalyzer:
             if not s:
                 continue
             low = s.lower()
-            if 'тип' in low:
+            if 'тип' in low or 'type' in low:
                 blocks['type'] = s.split('\n', 1)[-1].strip()
-            elif 'физика' in low:
+            elif 'физика' in low or 'physics' in low:
                 blocks['physics'] = s.split('\n', 1)[-1].strip()
-            elif 'сигнал' in low:
+            elif 'сигнал' in low or 'signal' in low:
                 blocks['signal'] = s.split('\n', 1)[-1].strip()
         return blocks
 
@@ -338,7 +324,7 @@ class SignalScorer:
             mode_a_signals.append(f"💼 Insider: {insider['count']} buys (${insider['total_value']/1000:.0f}k)")
         if dark_pool['score'] >= 15:
             mode_a_score += dark_pool['score']
-            mode_a_signals.append(f"🌑 Dark Pool: {dark_pool['dp_ratio']}% (тренд: {dark_pool['trend_5d']:+.1f}%)")
+            mode_a_signals.append(f"🌑 Dark Pool: {dark_pool['dp_ratio']}% (trend: {dark_pool['trend_5d']:+.1f}%)")
         if congress['score'] >= 15:
             mode_a_score += congress['score']
             mode_a_signals.append(f"🏛️ Congress: {congress['total_buys']} buys (S:{congress['senate_buys']} H:{congress['house_buys']})")
@@ -399,14 +385,24 @@ class UltimateScanner:
         self.universe = self._load_universe()
 
     def _load_universe(self) -> List[str]:
+        """Load full NASDAQ universe with multiple fallbacks"""
         cache_file = 'universe_cache.csv'
+        
+        # Check cache (7 days)
         if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 604800:
             tickers = pd.read_csv(cache_file)['Symbol'].tolist()
-            print(f"✅ Из кэша: {len(tickers)} тикеров")
+            print(f"✅ From cache: {len(tickers)} tickers")
             return tickers
-        print("🔄 Загрузка полной вселенной...")
+        
+        print("🔄 Loading full universe...")
         all_tickers = []
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        
+        # Attempt 1: NASDAQ API
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json'
+        }
+        
         for ex in ['NASDAQ', 'NYSE', 'AMEX']:
             try:
                 url = f"https://api.nasdaq.com/api/screener/stocks?tableType=traded&exchange={ex}&limit=10000"
@@ -417,28 +413,69 @@ class UltimateScanner:
                     all_tickers.extend(tickers_ex)
                     print(f"  ✅ {ex}: {len(tickers_ex)}")
             except Exception as e:
-                print(f"  ⚠️ {ex}: {e}")
+                print(f"  ⚠️ {ex} API failed: {e}")
+        
+        # Attempt 2: FTP fallback if API failed
+        if len(all_tickers) < 100:
+            print("🔄 Trying FTP fallback...")
+            try:
+                import ftplib
+                ftp = ftplib.FTP('ftp.nasdaqtrader.com')
+                ftp.login()
+                ftp.cwd('SymbolDirectory')
+                
+                lines = []
+                ftp.retrlines('RETR nasdaqlisted.txt', lines.append)
+                ftp.quit()
+                
+                for line in lines[1:-1]:
+                    parts = line.split('|')
+                    if parts and not parts[0].endswith('.'):
+                        all_tickers.append(parts[0].strip())
+                
+                print(f"  ✅ FTP NASDAQ: {len(all_tickers)}")
+            except Exception as e:
+                print(f"  ⚠️ FTP failed: {e}")
+        
+        # Attempt 3: Built-in list if all else failed
+        if len(all_tickers) < 100:
+            print("⚠️ Using built-in ticker list...")
+            builtin = [
+                'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'AMD', 'INTC', 'PYPL',
+                'SQ', 'COIN', 'MARA', 'RIOT', 'PLTR', 'SOFI', 'UPST', 'RIVN', 'LCID', 'NIO',
+                'XPEV', 'SNAP', 'PINS', 'UBER', 'LYFT', 'ABNB', 'DASH', 'ROKU', 'ZM', 'NFLX',
+                'QCOM', 'AVGO', 'TXN', 'AMAT', 'LRCX', 'KLAC', 'ASML', 'ARM', 'SMCI', 'DELL',
+                'PANW', 'CRWD', 'ZS', 'FTNT', 'NOW', 'ADBE', 'CRM', 'ORCL', 'CSCO', 'SOUN',
+                'OKLO', 'SMR', 'BBAI', 'AI', 'SHOP', 'SE', 'BABA', 'JD', 'PDD', 'BIDU',
+                'TSM', 'BILI', 'IQ', 'TCOM', 'VIPS', 'W', 'ETSY', 'SQ', 'AFRM', 'SOFI',
+                'HOOD', 'RBLX', 'U', 'DASH', 'SNOW', 'DDOG', 'NET', 'MDB', 'OKTA', 'WDAY',
+                'TEAM', 'HUBS', 'ZM', 'ZS', 'CRWD', 'PANW', 'FTNT', 'S', 'TTD', 'ROKU',
+                'SPOT', 'UBER', 'DIDI', 'GRAB', 'SE', 'CPNG', 'BABA', 'JD', 'PDD', 'BIDU'
+            ]
+            all_tickers.extend(builtin)
+            print(f"  ✅ Built-in: {len(builtin)}")
+        
         all_tickers = list(set(all_tickers))
         pd.DataFrame({'Symbol': all_tickers}).to_csv(cache_file, index=False)
-        print(f"✅ ВСЕГО: {len(all_tickers)} тикеров")
+        print(f"✅ TOTAL: {len(all_tickers)} tickers")
         return all_tickers
 
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v4.0 — FULL UNIVERSE")
+        print("🎯 ULTIMATE SCANNER v5.0 — FULL UNIVERSE")
         print("="*70)
-        print(f"📊 Universe: {len(self.universe)} тикеров")
-        print(f"⏰ Время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"📊 Universe: {len(self.universe)} tickers")
+        print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
-        print("\n📥 ЭТАП 1: Batch загрузка (пачками по 500)...")
+        print("\n📥 STAGE 1: Batch loading...")
         batch_size = 500
         all_data = {}
         total_batches = (len(self.universe) + batch_size - 1) // batch_size
         for i in range(0, len(self.universe), batch_size):
             batch = self.universe[i:i+batch_size]
             batch_num = i // batch_size + 1
-            print(f"  Батч {batch_num}/{total_batches} ({len(batch)} тикеров)...", end=' ', flush=True)
+            print(f"  Batch {batch_num}/{total_batches} ({len(batch)} tickers)...", end=' ', flush=True)
             try:
                 df = yf.download(batch, period='6mo', interval='1d', progress=False, threads=True)
                 for ticker in batch:
@@ -454,9 +491,9 @@ class UltimateScanner:
             except Exception as e:
                 print(f"❌ {e}")
             time.sleep(1)
-        print(f"\n✅ Загружено: {len(all_data)} тикеров")
+        print(f"\n✅ Loaded: {len(all_data)} tickers")
 
-        print("\n🔍 ЭТАП 2: Фильтрация (цена, объём)...")
+        print("\n🔍 STAGE 2: Filtering...")
         filtered = []
         for ticker, df in all_data.items():
             try:
@@ -475,13 +512,13 @@ class UltimateScanner:
                 filtered.append(ticker)
             except:
                 continue
-        print(f"✅ После фильтрации: {len(filtered)} тикеров")
+        print(f"✅ After filtering: {len(filtered)} tickers")
 
-        print(f"\n🔍 ЭТАП 3: Детальный скоринг {len(filtered)} тикеров...")
+        print(f"\n🔍 STAGE 3: Scoring {len(filtered)} tickers...")
         results = []
         for i, ticker in enumerate(filtered, 1):
             if i % 50 == 0:
-                print(f"  Прогресс: {i}/{len(filtered)}...", flush=True)
+                print(f"  Progress: {i}/{len(filtered)}...", flush=True)
             df = all_data[ticker]
             if self.scorer.is_biopharma(ticker):
                 continue
@@ -512,10 +549,10 @@ class UltimateScanner:
         mode_b.sort(key=lambda x: x['mode_b_score'], reverse=True)
         top_a = mode_a[:CONFIG['MODE_A']['top_n']]
         top_b = mode_b[:CONFIG['MODE_B']['top_n']]
-        print(f"\n🎯 MODE A (SNIPER): {len(mode_a)} найдено, берём топ-{len(top_a)}")
-        print(f"⚡ MODE B (TACTICAL): {len(mode_b)} найдено, берём топ-{len(top_b)}")
+        print(f"\n🎯 MODE A (SNIPER): {len(mode_a)} found, taking top-{len(top_a)}")
+        print(f"⚡ MODE B (TACTICAL): {len(mode_b)} found, taking top-{len(top_b)}")
 
-        print("\n🧠 ЭТАП 4: DeepSeek AI анализ...")
+        print("\n🧠 STAGE 4: DeepSeek AI analysis...")
         for r in top_a:
             print(f"  🔴 [A] {r['ticker']}...")
             r['ai'] = self.ai.analyze(r['ticker'], r, 'A')
@@ -543,21 +580,21 @@ class UltimateScanner:
             json.dump(output, f, ensure_ascii=False, indent=2)
 
         self._print_results(top_a, top_b)
-        print(f"\n💾 Сохранено: scan_results.json, scan_{timestamp}.json")
-        print(f"⏱️  Время: {time.time() - start:.1f} сек")
+        print(f"\n💾 Saved: scan_results.json, scan_{timestamp}.json")
+        print(f"⏱️  Time: {time.time() - start:.1f} sec")
         return output
 
     def _print_results(self, mode_a, mode_b):
         print("\n" + "="*70)
-        print("🔴 MODE A: SNIPER (2 тикера, +40%, позиция $2000)")
+        print("🔴 MODE A: SNIPER (2 tickers, +40%, position $2000)")
         print("="*70)
         if not mode_a:
-            print("  ⚪ Нет сигналов сегодня")
+            print("  ⚪ No signals today")
         else:
             for r in mode_a:
                 print(f"\n{'─'*70}")
                 print(f"📈 {r['ticker']} | ${r['price']} | Score: {r['mode_a_score']}")
-                print(f"   Позиция: {r['position_pct']}% | Скидка: {r['discount_pct']}% | RVOL: {r['rvol']}x")
+                print(f"   Position: {r['position_pct']}% | Discount: {r['discount_pct']}% | RVOL: {r['rvol']}x")
                 for sig in r['mode_a_signals'][:5]:
                     print(f"   {sig}")
                 print(f"{'─'*70}")
@@ -566,15 +603,15 @@ class UltimateScanner:
                     if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
         print("\n" + "="*70)
-        print("🟡 MODE B: TACTICAL (2 тикера, +20%, позиция $1000)")
+        print("🟡 MODE B: TACTICAL (2 tickers, +20%, position $1000)")
         print("="*70)
         if not mode_b:
-            print("  ⚪ Нет сигналов сегодня")
+            print("  ⚪ No signals today")
         else:
             for r in mode_b:
                 print(f"\n{'─'*70}")
                 print(f"📈 {r['ticker']} | ${r['price']} | Score: {r['mode_b_score']}")
-                print(f"   Позиция: {r['position_pct']}% | Скидка: {r['discount_pct']}% | RVOL: {r['rvol']}x")
+                print(f"   Position: {r['position_pct']}% | Discount: {r['discount_pct']}% | RVOL: {r['rvol']}x")
                 for sig in r['mode_b_signals'][:5]:
                     print(f"   {sig}")
                 print(f"{'─'*70}")
@@ -586,10 +623,10 @@ class UltimateScanner:
 
 if __name__ == "__main__":
     if not CONFIG['DEEPSEEK_API_KEY']:
-        print("❌ DEEPSEEK_API_KEY не найден")
-        print("   В Colab: os.environ['DEEPSEEK_API_KEY'] = 'sk-...'")
+        print("❌ DEEPSEEK_API_KEY not found")
+        print("   In Railway: Add DEEPSEEK_API_KEY to Variables")
         exit(1)
     if not CONFIG['FINNHUB_API_KEY']:
-        print("⚠️  FINNHUB_API_KEY не найден (опционально)")
+        print("⚠️  FINNHUB_API_KEY not found (optional)")
     scanner = UltimateScanner()
     scanner.run()
