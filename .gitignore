@@ -1,0 +1,7 @@
+.env
+__pycache__/
+*.pyc
+universe_cache.csv
+scan_*.json
+*.log
+venv/
