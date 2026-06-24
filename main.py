@@ -1,37 +1,32 @@
 #!/usr/bin/env python3
-"""Railway Entry Point — v7.10 Manual Start"""
-import os, sys, threading, time
+"""Railway Entry Point — v7.12 with concurrency guard"""
+import os, sys, threading
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
+from ultimate_scanner import UltimateScanner, DEEPSEEK_KEY, ALPACA_KEY, ALPACA_SECRET
 
-from ultimate_scanner import UltimateScanner, CONFIG, DEEPSEEK_KEY, ALPACA_KEY, ALPACA_SECRET
-
-app = FastAPI(title="Ultimate Scanner Dashboard")
-scan_results = {"mode_a": [], "mode_b": [], "stats": {}, "timestamp": ""}
+app = FastAPI(title="Scanner Dashboard")
+scan_results = {"mode_a":[],"mode_b":[],"stats":{},"timestamp":""}
 scan_lock = threading.Lock()
+is_running = False
 
 def run_scanner():
-    global scan_results
-    print("="*70)
-    print(f"🚀 Запуск сканера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("="*70)
+    global scan_results, is_running
     try:
         if not DEEPSEEK_KEY:
-            print("❌ DEEPSEEK_API_KEY not found"); return
-        if not ALPACA_KEY or not ALPACA_SECRET:
-            print("❌ ALPACA keys not found"); return
+            print("❌ DEEPSEEK_API_KEY missing"); return
         scanner = UltimateScanner()
         results = scanner.run()
         with scan_lock:
             scan_results = results
-        print("\n✅ Scan completed successfully")
     except Exception as e:
         print(f"❌ Scanner error: {e}")
         import traceback; traceback.print_exc()
+    finally:
+        is_running = False
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
@@ -48,15 +43,20 @@ async def get_results():
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "timestamp": datetime.now().isoformat()}
+    return {"status":"ok","timestamp":datetime.now().isoformat()}
 
 @app.post("/api/scan")
 async def trigger_scan():
+    global is_running
+    if is_running:
+        return {"status":"already_running","message":"Previous scan still in progress"}
+    
+    is_running = True
     threading.Thread(target=run_scanner, daemon=True).start()
-    return {"status": "started", "message": "Scan triggered"}
+    return {"status":"started"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print(f"🌐 Dashboard: http://0.0.0.0:{port}")
-    print("📌 Сканер: POST /api/scan")
+    print("📌 POST /api/scan to start")
     uvicorn.run(app, host="0.0.0.0", port=port)

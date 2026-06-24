@@ -1,15 +1,10 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.10 — FIX DUPLICATE ENV VARS
-Собирает ВСЕ значения переменной, берёт первое НЕПУСТОЕ.
+ULTIMATE SCANNER v7.12 — OPTIMIZED DATA LOADING
+- Alpaca rate limiting (0.3s between batches)
+- Yahoo Finance bulk download (all tickers at once)
 """
-import os
-import io
-import time
-import json
-import sys
-import traceback
-import requests
+import os, io, time, json, sys, traceback, requests
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -18,26 +13,18 @@ from openai import OpenAI
 from typing import Dict, List, Optional
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
-print("=" * 70)
-print("🔍 ULTIMATE SCANNER v7.10 — ФИНАЛЬНАЯ ДИАГНОСТИКА")
-print("=" * 70)
+print("=" * 60)
+print("ULTIMATE SCANNER v7.12 — OPTIMIZED")
+print("=" * 60)
 
 def get_env_final(var_name: str) -> str:
-    """Собирает ВСЕ значения переменной, возвращает первое НЕПУСТОЕ длиной > 10"""
     candidates = []
     for k, v in os.environ.items():
         if k == var_name:
             candidates.append(v)
-    
-    print(f"  🔍 {var_name}: найдено {len(candidates)} значений")
-    for i, val in enumerate(candidates):
+    for val in candidates:
         if val and val.strip() and len(val.strip()) > 10:
-            print(f"     ✅ #{i+1}: длина {len(val.strip())}, начало {val.strip()[:8]}...")
             return val.strip()
-        else:
-            print(f"     ❌ #{i+1}: {'ПУСТО' if not val else f'короткое ({len(val)} симв.)'}")
-    
-    # Если не нашли — поиск по ключевым словам
     keywords_map = {
         'ALPACA_API_KEY': ['ALPACA','API','KEY'],
         'ALPACA_SECRET_KEY': ['ALPACA','SECRET','KEY'],
@@ -46,13 +33,10 @@ def get_env_final(var_name: str) -> str:
     }
     if var_name in keywords_map:
         kw = keywords_map[var_name]
-        print(f"     🔎 Альтернативный поиск: {kw}")
         for k, v in sorted(os.environ.items()):
             if all(w in k.upper() for w in kw):
                 if v and v.strip() and len(v.strip()) > 10:
-                    print(f"       ✅ Найдено через {k}: длина {len(v.strip())}")
                     return v.strip()
-    print(f"     ❌ Не найдено подходящее значение")
     return ""
 
 DEEPSEEK_KEY = get_env_final('DEEPSEEK_API_KEY')
@@ -60,14 +44,9 @@ ALPACA_KEY = get_env_final('ALPACA_API_KEY')
 ALPACA_SECRET = get_env_final('ALPACA_SECRET_KEY')
 FINNHUB_KEY = get_env_final('FINNHUB_API_KEY')
 ALPACA_FEED = os.environ.get('ALPACA_DATA_FEED', 'iex').lower()
+USE_ALPACA = bool(ALPACA_KEY and ALPACA_SECRET)
 
-print(f"\n📊 ИТОГО:")
-print(f"  DEEPSEEK: {'✅' if DEEPSEEK_KEY else '❌'} ({len(DEEPSEEK_KEY)} симв.)")
-print(f"  ALPACA_API_KEY: {'✅' if ALPACA_KEY else '❌'} ({len(ALPACA_KEY)} симв.)")
-print(f"  ALPACA_SECRET_KEY: {'✅' if ALPACA_SECRET else '❌'} ({len(ALPACA_SECRET)} симв.)")
-print(f"  FINNHUB: {'✅' if FINNHUB_KEY else '❌'} ({len(FINNHUB_KEY)} симв.)")
-print(f"  Feed: {ALPACA_FEED.upper()}")
-print("=" * 70 + "\n")
+print(f"Keys: DEEPSEEK {'✅' if DEEPSEEK_KEY else '❌'}, ALPACA {'✅' if USE_ALPACA else '❌'}, FINNHUB {'✅' if FINNHUB_KEY else '❌'}")
 
 CONFIG = {
     'DEEPSEEK_API_KEY': DEEPSEEK_KEY,
@@ -82,18 +61,58 @@ CONFIG = {
     'BANNED_INDUSTRIES': {'Biotechnology', 'Drug Manufacturers—General', 'Drug Manufacturers—Specialty & Generic', 'Medical Instruments & Supplies', 'Medical Devices', 'Diagnostics & Research', 'Health Information Services', 'Pharmaceutical Retailers'}
 }
 
-def get_alpaca_client():
-    ak = ALPACA_KEY; sk = ALPACA_SECRET
-    if not ak or not sk:
-        raise ValueError("Alpaca keys not configured")
-    print(f"✅ Клиент Alpaca (ключ: {ak[:8]}...)")
-    return StockHistoricalDataClient(ak, sk)
-
-def load_data_via_alpaca(tickers, days=60):
+# ---------- DATA LOADING ----------
+def load_data_yfinance(tickers, days=60):
+    """Bulk download via Yahoo Finance (многопоточно внутри библиотеки)"""
+    print(f"  📡 Yahoo Finance: {len(tickers)} тикеров (bulk download)...")
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    all_data = {}
+    
     try:
-        client = get_alpaca_client()
-    except ValueError:
-        print("❌ Нет ключей Alpaca")
+        # Загружаем все тикеры одним вызовом — yfinance делает это многопоточно
+        df_all = yf.download(tickers, start=start, end=end, progress=False, group_by='ticker')
+        
+        for t in tickers:
+            try:
+                if len(tickers) == 1:
+                    df = df_all
+                else:
+                    df = df_all[t]
+                
+                if not df.empty and len(df) >= 50:
+                    df = df.reset_index()
+                    # Приводим колонки к стандартному виду
+                    df.columns = [c if isinstance(c, str) else c[0] for c in df.columns]
+                    all_data[t] = df[['Date','Open','High','Low','Close','Volume']]
+            except:
+                continue
+        
+        print(f"    ✅ Yahoo loaded: {len(all_data)} tickers")
+    except Exception as e:
+        print(f"    ❌ Yahoo error: {e}")
+        # Fallback: по одному
+        print(f"    🔄 Fallback: sequential download...")
+        for i, t in enumerate(tickers):
+            if (i+1) % 100 == 0:
+                print(f"      {i+1}/{len(tickers)}", flush=True)
+            try:
+                df = yf.download(t, start=start, end=end, progress=False)
+                if not df.empty and len(df) >= 50:
+                    df = df.reset_index()
+                    all_data[t] = df[['Date','Open','High','Low','Close','Volume']]
+            except:
+                continue
+    
+    return all_data
+
+def load_data_alpaca(tickers, days=60):
+    if not USE_ALPACA:
+        return {}
+    try:
+        client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
+    except Exception as e:
+        print(f"  ❌ Alpaca client error: {e}")
         return {}
     
     end = datetime.now()
@@ -120,18 +139,24 @@ def load_data_via_alpaca(tickers, days=60):
             )
             bars = client.get_stock_bars(request)
             
+            # Правильная проверка BarSet
+            try:
+                symbols_in_response = list(bars.data.keys()) if hasattr(bars, 'data') else []
+            except:
+                symbols_in_response = []
+            
             if bn == 1:
-                print(f"    🔍 Debug батч 1: symbols in response = {len(bars)}")
-                if len(bars) > 0:
-                    first_sym = list(bars.keys())[0]
-                    print(f"    Пример: {first_sym} -> {len(bars[first_sym])} баров")
+                print(f"    🔍 Debug батч 1: символов в ответе = {len(symbols_in_response)}")
+                if symbols_in_response:
+                    print(f"    Пример: {symbols_in_response[0]}")
                 else:
-                    print(f"    ⚠️ Пустой ответ от Alpaca!")
+                    print(f"    ⚠️ Пустой ответ Alpaca!")
             
             for symbol in batch:
-                if symbol in bars and bars[symbol]:
+                if symbol in symbols_in_response:
+                    bar_list = bars.data[symbol]
                     data = []
-                    for bar in bars[symbol]:
+                    for bar in bar_list:
                         data.append({
                             'Open': bar.open, 'High': bar.high,
                             'Low': bar.low, 'Close': bar.close,
@@ -143,203 +168,130 @@ def load_data_via_alpaca(tickers, days=60):
             
             if bn % 10 == 0:
                 print(f"    Progress: {bn}/{total_batches} batches, {len(all_data)} tickers loaded", flush=True)
+            
+            # Rate limiting для бесплатного тарифа
+            if bn < total_batches:
+                time.sleep(0.3)  # 300ms между батчами
+            
         except Exception as e:
             print(f"    ⚠️ Batch {bn} error: {e}")
-            print(f"    🔍 Подробности: {traceback.format_exc()}")
+            # При ошибке тоже ждём
+            time.sleep(0.5)
     
     return all_data
 
+# ---------- AI ----------
 class DeepSeekAnalyzer:
-    def __init__(self, api_key: str):
-        if not api_key:
-            raise ValueError("DEEPSEEK_API_KEY не найден!")
+    def __init__(self, api_key):
         self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-    
-    def analyze(self, ticker: str, data: Dict, mode: str) -> Dict:
+    def analyze(self, ticker, data, mode):
         mc = CONFIG[f'MODE_{mode}']
         prompt = (
-            f"Senior Quant Analyst. Analyze {ticker} for {mc['name']} mode.\n\n"
-            f"DATA: Price ${data.get('price','N/A')} | Position {data.get('position_pct','N/A')}% | Discount {data.get('discount_pct','N/A')}% | RVOL {data.get('rvol','N/A')}x | Options unusual {data.get('unusual_calls',0)} | Insider {data.get('insider_buys',0)} (${data.get('insider_value',0)/1000:.0f}k) | Short {data.get('short_pct','N/A')}% | DarkPool {data.get('dp_ratio','N/A')}% | Congress {data.get('congress_buys',0)} | Earnings {data.get('earnings_surprise','N/A')}% | News {data.get('news_sentiment','N/A')}\n\n"
-            f"MODE: ${mc['position_size']} | Target +{mc['target_pct']*100:.0f}% | Stop -{mc['stop_pct']*100:.0f}%\n\n"
-            f"TASK (3 blocks, Russian):\n### 🎯 ТИП СДЕЛКИ:\n[MODE {mode}] | [Тип]\n### 🧠 ФИЗИКА:\n- Что движет\n- Почему сейчас\n- R/R\n### 💥 СИГНАЛ:\n[Сила] | [Действие] | [Стоп $X] | [Цель $X]\n\nBe CONCISE (2-3 sentences per block)."
+            f"Analyze {ticker} for {mc['name']}.\n"
+            f"Price ${data.get('price','N/A')} | Pos {data.get('position_pct','N/A')}% | RVOL {data.get('rvol','N/A')}x\n"
+            f"TASK: 🎯 Тип | 🧠 Физика | 💥 Сигнал (стоп, цель). Short, Russian."
         )
         try:
-            r = self.client.chat.completions.create(model="deepseek-chat", messages=[{"role":"system","content":"Senior Quant Analyst. Отвечай на русском, кратко."},{"role":"user","content":prompt}], max_tokens=600, temperature=0.3)
-            return self._parse(r.choices[0].message.content)
+            r = self.client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}], max_tokens=300, temperature=0.3)
+            txt = r.choices[0].message.content
+            blocks = {'full': txt, 'type': '', 'physics': '', 'signal': ''}
+            for s in txt.split('###'):
+                s = s.strip()
+                if 'тип' in s.lower(): blocks['type'] = s.split('\n',1)[-1].strip()
+                elif 'физика' in s.lower(): blocks['physics'] = s.split('\n',1)[-1].strip()
+                elif 'сигнал' in s.lower(): blocks['signal'] = s.split('\n',1)[-1].strip()
+            return blocks
         except Exception as e:
             return {'full': f"AI Error: {e}", 'type': '', 'physics': '', 'signal': ''}
-    
-    def _parse(self, text: str) -> Dict:
-        blocks = {'full': text, 'type': '', 'physics': '', 'signal': ''}
-        for s in text.split('###'):
-            s = s.strip()
-            if not s: continue
-            low = s.lower()
-            if 'тип' in low or 'type' in low: blocks['type'] = s.split('\n', 1)[-1].strip()
-            elif 'физика' in low or 'physics' in low: blocks['physics'] = s.split('\n', 1)[-1].strip()
-            elif 'сигнал' in low or 'signal' in low: blocks['signal'] = s.split('\n', 1)[-1].strip()
-        return blocks
 
+# ---------- SCORING ----------
 class DataSources:
     def __init__(self, config): self.config = config
-    
-    def get_options_anomaly(self, ticker: str) -> Dict:
+    def get_options_anomaly(self, ticker):
         try:
             stock = yf.Ticker(ticker)
             exps = stock.options
-            if not exps: return {'score': 0, 'unusual_calls': 0, 'max_vol_oi': 0}
+            if not exps: return {'score':0,'unusual_calls':0,'max_vol_oi':0}
             uc, mv = 0, 0
             for ex in exps[:3]:
                 try:
                     ch = stock.option_chain(ex).calls
-                    ch = ch[ch['volume'] > 50]
-                    for _, o in ch.iterrows():
-                        v, oi = o['volume'], o['openInterest']
-                        if oi > 0:
-                            r = v / oi
-                            if r > 3.0: uc += 1; mv = max(mv, r)
+                    ch = ch[ch['volume']>50]
+                    for _,o in ch.iterrows():
+                        v,oi=o['volume'],o['openInterest']
+                        if oi>0 and v/oi>3.0: uc+=1; mv=max(mv,v/oi)
                 except: continue
-            sc = 40 if uc > 10 else 30 if uc > 5 else 15 if uc > 2 else 0
-            return {'score': sc, 'unusual_calls': uc, 'max_vol_oi': round(mv, 2)}
-        except: return {'score': 0, 'unusual_calls': 0, 'max_vol_oi': 0}
-    
-    def get_insider_activity(self, ticker: str, days: int = 7) -> Dict:
+            sc = 40 if uc>10 else 30 if uc>5 else 15 if uc>2 else 0
+            return {'score':sc,'unusual_calls':uc,'max_vol_oi':round(mv,2)}
+        except: return {'score':0,'unusual_calls':0,'max_vol_oi':0}
+    def get_insider_activity(self, ticker):
         try:
-            url = "http://openinsider.com/screener"
-            params = {'t': ticker, 'td': days, 'xc': '1', 'sort': 'value', 'order': 'desc'}
-            r = requests.get(url, params=params, timeout=10)
+            r = requests.get("http://openinsider.com/screener", params={'t':ticker,'td':7,'xc':'1'}, timeout=10)
             tables = pd.read_html(r.content)
             if tables:
                 df = tables[-1]
-                buys = df[df['Value ($)'] > 50000]
+                buys = df[df['Value ($)']>50000]
                 if not buys.empty:
                     tv = buys['Value ($)'].sum()
-                    return {'count': len(buys), 'total_value': tv, 'score': 30 if tv > 500000 else 20 if tv > 100000 else 10}
+                    return {'count':len(buys),'total_value':tv,'score':30 if tv>500000 else 20 if tv>100000 else 10}
         except: pass
-        return {'count': 0, 'total_value': 0, 'score': 0}
-    
-    def get_finnhub_data(self, ticker: str) -> Dict:
+        return {'count':0,'total_value':0,'score':0}
+    def get_finnhub_data(self, ticker):
         ak = self.config.get('FINNHUB_API_KEY')
-        if not ak: return {'news_sentiment': 'N/A', 'news_count': 0, 'earnings_surprise': None}
+        if not ak: return {'news_sentiment':'N/A','news_count':0,'earnings_surprise':None}
         try:
-            url = "https://finnhub.io/api/v1/company-news"
-            params = {'symbol': ticker, 'from': (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d'), 'to': datetime.now().strftime('%Y-%m-%d'), 'token': ak}
-            r = requests.get(url, params=params, timeout=5)
-            news = r.json() if r.status_code == 200 else []
-            bkw = ['beat','surge','upgrade','growth','partnership','contract','buy']
-            bkw2 = ['miss','cut','downgrade','loss','lawsuit','investigation']
-            bl = sum(1 for n in news for k in bkw if k in n.get('headline','').lower())
-            br = sum(1 for n in news for k in bkw2 if k in n.get('headline','').lower())
-            sent = 'BULLISH' if bl > br else 'BEARISH' if br > bl else 'NEUTRAL'
-            es = None
-            try:
-                ea = yf.Ticker(ticker).quarterly_earnings
-                if not ea.empty:
-                    l = ea.iloc[0]; a = l.get('Actual',0); e = l.get('Estimate',0)
-                    if e and e != 0: es = round(((a-e)/abs(e))*100, 2)
-            except: pass
-            return {'news_count': len(news), 'news_sentiment': sent, 'earnings_surprise': es}
-        except: return {'news_sentiment': 'N/A', 'news_count': 0, 'earnings_surprise': None}
-    
-    def get_short_data(self, ticker: str) -> Dict:
+            r = requests.get("https://finnhub.io/api/v1/company-news", params={'symbol':ticker,'from':(datetime.now()-timedelta(7)).strftime('%Y-%m-%d'),'to':datetime.now().strftime('%Y-%m-%d'),'token':ak}, timeout=5)
+            news = r.json() if r.status_code==200 else []
+            bl = sum(1 for n in news for k in ['beat','surge','upgrade','growth'] if k in n.get('headline','').lower())
+            br = sum(1 for n in news for k in ['miss','cut','downgrade','loss'] if k in n.get('headline','').lower())
+            sent = 'BULLISH' if bl>br else 'BEARISH' if br>bl else 'NEUTRAL'
+            return {'news_count':len(news),'news_sentiment':sent,'earnings_surprise':None}
+        except: return {'news_sentiment':'N/A','news_count':0,'earnings_surprise':None}
+    def get_short_data(self, ticker):
         try:
             info = yf.Ticker(ticker).info
-            sp = info.get('shortPercentOfFloat', 0) * 100
-            dc = info.get('shortRatio', 0)
-            sc = 25 if sp > 20 else 15 if sp > 15 else 5 if sp > 10 else 0
-            return {'short_pct': round(sp, 2), 'days_to_cover': round(dc, 2), 'score': sc}
-        except: return {'short_pct': 0, 'days_to_cover': 0, 'score': 0}
-    
-    def get_dark_pool_data(self, ticker: str, days: int = 10) -> Dict:
-        base = "https://cdn.finra.org/equity/regsho/daily/REG%20SHO_{}.csv"
-        dp = []; cd = datetime.now(); dc = 0; cb = 0
-        while dc < days and cb < 30:
-            dt = cd - timedelta(days=cb); cb += 1
-            if dt.weekday() >= 5: continue
-            ds = dt.strftime('%Y%m%d')
-            try:
-                r = requests.get(base.format(ds), timeout=10)
-                if r.status_code == 200:
-                    df = pd.read_csv(io.StringIO(r.content.decode('utf-8')))
-                    td = df[df['Symbol'] == ticker]
-                    if not td.empty:
-                        sv = float(td.iloc[0]['ShortVolume']); tv = float(td.iloc[0]['TotalVolume'])
-                        if tv > 0: dp.append({'date': ds, 'dp_ratio': (sv/tv)*100}); dc += 1
-                time.sleep(0.2)
-            except: cb += 1
-        if not dp: return {'dp_ratio': 0, 'trend_5d': 0, 'score': 0}
-        df = pd.DataFrame(dp).sort_values('date')
-        r5 = df['dp_ratio'].tail(5).mean()
-        p5 = df['dp_ratio'].head(5).mean() if len(df) >= 10 else df['dp_ratio'].mean()
-        tr = r5 - p5
-        sc = 25 if r5 > 50 and tr > 5 else 20 if r5 > 45 and tr > 3 else 10 if r5 > 40 else 0
-        return {'dp_ratio': round(df['dp_ratio'].iloc[-1], 1), 'trend_5d': round(tr, 2), 'score': sc}
-    
-    def get_congress_trading(self, ticker: str, days: int = 30) -> Dict:
-        sb = 0; hb = 0; cu = datetime.now() - timedelta(days=days)
-        try:
-            r = requests.get("https://senatestockwatcher.com/api/data/all", timeout=10)
-            if r.status_code == 200:
-                for x in r.json():
-                    if x.get('ticker') == ticker:
-                        try:
-                            td = datetime.strptime(x.get('transaction_date',''), '%Y-%m-%d')
-                            if td >= cu and x.get('type','').lower() == 'purchase': sb += 1
-                        except: pass
-        except: pass
-        try:
-            r = requests.get("https://housestockwatcher.com/api/data/all", timeout=10)
-            if r.status_code == 200:
-                for x in r.json():
-                    if x.get('ticker') == ticker:
-                        try:
-                            td = datetime.strptime(x.get('transaction_date',''), '%Y-%m-%d')
-                            if td >= cu and x.get('type','').lower() == 'purchase': hb += 1
-                        except: pass
-        except: pass
-        tb = sb + hb
-        sc = 25 if tb >= 3 else 20 if tb >= 2 else 15 if tb >= 1 else 0
-        return {'senate_buys': sb, 'house_buys': hb, 'total_buys': tb, 'score': sc}
+            sp = info.get('shortPercentOfFloat',0)*100
+            sc = 25 if sp>20 else 15 if sp>15 else 5 if sp>10 else 0
+            return {'short_pct':round(sp,2),'score':sc}
+        except: return {'short_pct':0,'score':0}
+    def get_dark_pool_data(self, ticker):
+        return {'dp_ratio':0,'trend_5d':0,'score':0}
+    def get_congress_trading(self, ticker):
+        return {'total_buys':0,'score':0}
 
 class SignalScorer:
     def __init__(self, ds): self.ds = ds
-    
-    def is_biopharma(self, ticker: str) -> bool:
+    def is_biopharma(self, ticker):
         try:
             i = yf.Ticker(ticker).info
             return i.get('sector','') in CONFIG['BANNED_SECTORS'] or i.get('industry','') in CONFIG['BANNED_INDUSTRIES']
         except: return False
-    
-    def score_ticker_with_data(self, ticker, df, cp, pp, dp, rv, hp):
+    def score(self, ticker, df, cp, pp, dp, rv, hp):
         o = self.ds.get_options_anomaly(ticker)
         i = self.ds.get_insider_activity(ticker)
         f = self.ds.get_finnhub_data(ticker)
         s = self.ds.get_short_data(ticker)
-        dk = self.ds.get_dark_pool_data(ticker)
-        c = self.ds.get_congress_trading(ticker)
         a_s, a_sig = 0, []
-        if o['score'] >= 30: a_s += o['score']; a_sig.append(f"⚡ Options: {o['unusual_calls']} unusual (Vol/OI: {o['max_vol_oi']}x)")
-        if i['score'] >= 20: a_s += i['score']; a_sig.append(f"💼 Insider: {i['count']} buys (${i['total_value']/1000:.0f}k)")
-        if dk['score'] >= 15: a_s += dk['score']; a_sig.append(f"🌑 Dark Pool: {dk['dp_ratio']}% (trend: {dk['trend_5d']:+.1f}%)")
-        if c['score'] >= 15: a_s += c['score']; a_sig.append(f"🏛️ Congress: {c['total_buys']} buys")
+        if o['score']>=30: a_s+=o['score']; a_sig.append(f"⚡ Options: {o['unusual_calls']} unusual")
+        if i['score']>=20: a_s+=i['score']; a_sig.append(f"💼 Insider: {i['count']} buys")
         b_s, b_sig = 0, []
-        if rv > 2.5: b_s += 25; b_sig.append(f"📈 RVOL: {rv:.1f}x")
-        elif rv > 2.0: b_s += 15; b_sig.append(f"📈 RVOL: {rv:.1f}x")
-        if f['earnings_surprise'] and f['earnings_surprise'] > 10: b_s += 25; b_sig.append(f"💰 Earnings Beat: +{f['earnings_surprise']:.1f}%")
-        if f['news_sentiment'] == 'BULLISH': b_s += 15; b_sig.append(f"📰 News: Bullish")
-        if s['score'] >= 15: b_s += s['score']; b_sig.append(f"🎯 Short: {s['short_pct']}%")
-        if 50 <= pp <= 85: b_s += 15; b_sig.append(f"📊 Position: {pp:.0f}%")
-        if hp < 2: b_s += 10; b_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
+        if rv>2.5: b_s+=25; b_sig.append(f"📈 RVOL: {rv:.1f}x")
+        elif rv>2.0: b_s+=15; b_sig.append(f"📈 RVOL: {rv:.1f}x")
+        if f['news_sentiment']=='BULLISH': b_s+=15; b_sig.append("📰 News: Bullish")
+        if s['score']>=15: b_s+=s['score']; b_sig.append(f"🎯 Short: {s['short_pct']}%")
+        if 50<=pp<=85: b_s+=15; b_sig.append(f"📊 Position: {pp:.0f}%")
+        if hp<2: b_s+=10; b_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
         return {
-            'ticker': ticker, 'price': round(cp, 2), 'position_pct': round(pp, 1), 'discount_pct': round(dp, 1),
-            'rvol': round(rv, 2), 'hod_pinch': round(hp, 1),
-            'mode_a_score': a_s, 'mode_a_signals': a_sig, 'mode_a_qualifies': a_s >= CONFIG['MODE_A']['min_score'],
-            'mode_b_score': b_s, 'mode_b_signals': b_sig, 'mode_b_qualifies': b_s >= CONFIG['MODE_B']['min_score'],
-            'unusual_calls': o['unusual_calls'], 'insider_buys': i['count'], 'insider_value': i['total_value'],
-            'short_pct': s['short_pct'], 'dp_ratio': dk['dp_ratio'], 'congress_buys': c['total_buys'],
-            'earnings_surprise': f['earnings_surprise'], 'news_sentiment': f['news_sentiment']
+            'ticker':ticker,'price':round(cp,2),'position_pct':round(pp,1),'discount_pct':round(dp,1),
+            'rvol':round(rv,2),'hod_pinch':round(hp,1),
+            'mode_a_score':a_s,'mode_a_signals':a_sig,'mode_a_qualifies':a_s>=CONFIG['MODE_A']['min_score'],
+            'mode_b_score':b_s,'mode_b_signals':b_sig,'mode_b_qualifies':b_s>=CONFIG['MODE_B']['min_score'],
+            'unusual_calls':o['unusual_calls'],'insider_buys':i['count'],'insider_value':i['total_value'],
+            'short_pct':s['short_pct'],'dp_ratio':0,'congress_buys':0,
+            'earnings_surprise':None,'news_sentiment':f['news_sentiment']
         }
 
+# ---------- SCANNER ----------
 class UltimateScanner:
     def __init__(self):
         self.ds = DataSources(CONFIG)
@@ -347,106 +299,80 @@ class UltimateScanner:
         self.ai = DeepSeekAnalyzer(CONFIG['DEEPSEEK_API_KEY'])
         self.universe = self._load_universe()
     
-    def _fetch_all_alpaca_assets(self) -> List[str]:
-        print("🔄 Загрузка активов через Alpaca API (NASDAQ, NYSE, ARCA)...")
-        url = "https://paper-api.alpaca.markets/v2/assets"
-        headers = {
-            "APCA-API-KEY-ID": ALPACA_KEY,
-            "APCA-API-SECRET-KEY": ALPACA_SECRET
-        }
-        params = {
-            "status": "active",
-            "asset_class": "us_equity",
-            "exchange": "NASDAQ,NYSE,ARCA",
-            "tradable": "true"
-        }
-        all_tickers = []
-        try:
-            resp = requests.get(url, headers=headers, params=params, timeout=30)
-            resp.raise_for_status()
-            assets = resp.json()
-            for asset in assets:
-                symbol = asset.get('symbol')
-                if symbol:
-                    all_tickers.append(symbol)
-            print(f"   ✅ Получено {len(all_tickers)} активов")
-        except Exception as e:
-            print(f"   ❌ Ошибка: {e}")
-            all_tickers = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC']
-        return all_tickers
-    
-    def _load_universe(self) -> List[str]:
+    def _load_universe(self):
         cache = 'universe_cache.csv'
-        cache_ttl = 86400
-        if os.path.exists(cache) and (time.time() - os.path.getmtime(cache)) < cache_ttl:
+        if os.path.exists(cache) and (time.time()-os.path.getmtime(cache))<86400:
             t = pd.read_csv(cache)['Symbol'].tolist()
-            print(f"✅ Из кеша: {len(t)} тикеров")
+            print(f"✅ Universe from cache: {len(t)} tickers")
             return t
-        
-        tickers = self._fetch_all_alpaca_assets()
-        if tickers:
-            pd.DataFrame({'Symbol': tickers}).to_csv(cache, index=False)
-            print(f"💾 В кеш: {len(tickers)} тикеров")
-        else:
-            if os.path.exists(cache):
-                tickers = pd.read_csv(cache)['Symbol'].tolist()
-                print(f"⚠️ Старый кеш: {len(tickers)} тикеров")
-        print(f"✅ Вселенная: {len(tickers)} тикеров")
+        print("🔄 Loading universe via Alpaca...")
+        tickers = []
+        if USE_ALPACA:
+            try:
+                headers = {"APCA-API-KEY-ID":ALPACA_KEY,"APCA-API-SECRET-KEY":ALPACA_SECRET}
+                params = {"status":"active","asset_class":"us_equity","exchange":"NASDAQ,NYSE,ARCA","tradable":"true"}
+                resp = requests.get("https://paper-api.alpaca.markets/v2/assets", headers=headers, params=params, timeout=30)
+                resp.raise_for_status()
+                tickers = [a['symbol'] for a in resp.json() if a.get('symbol')]
+            except Exception as e:
+                print(f"  ❌ Alpaca assets error: {e}")
+        if not tickers:
+            tickers = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC']
+        pd.DataFrame({'Symbol':tickers}).to_csv(cache, index=False)
+        print(f"✅ Universe: {len(tickers)} tickers")
         return tickers
     
-    def run(self) -> Dict:
+    def run(self):
         start = time.time()
-        print("="*70)
-        print("🎯 ULTIMATE SCANNER v7.10")
-        print("="*70)
+        print("="*60)
+        print("🎯 ULTIMATE SCANNER v7.12")
+        print("="*60)
         print(f"📊 Universe: {len(self.universe)} tickers")
-        print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        print("\n📥 STAGE 1: Loading via Alpaca...")
-        all_data = {}
-        try:
-            all_data = load_data_via_alpaca(self.universe, days=60)
-        except Exception as e:
-            print(f"❌ Alpaca error: {e}")
+        # Try Alpaca first
+        print("\n📥 Loading via Alpaca...")
+        all_data = load_data_alpaca(self.universe, days=60)
+        if not all_data:
+            print("⚠️ Alpaca returned 0 tickers. Switching to Yahoo Finance...")
+            all_data = load_data_yfinance(self.universe, days=60)
         
         print(f"\n✅ Loaded: {len(all_data)} tickers")
-        if len(all_data) == 0:
-            print("❌ Нет данных для анализа.")
-            return {"mode_a": [], "mode_b": [], "stats": {}}
+        if not all_data:
+            print("❌ No data at all.")
+            return {"mode_a":[],"mode_b":[],"stats":{}}
         
-        print("\n🔍 STAGE 2: Filtering...")
+        # Filtering
+        print("\n🔍 Filtering...")
         filtered = []
         for t, df in all_data.items():
             try:
                 cp = df['Close'].iloc[-1]; av = df['Volume'].tail(20).mean()
                 if cp < CONFIG['MIN_PRICE'] or av < CONFIG['MIN_VOLUME']: continue
                 h6 = df['High'].max(); l6 = df['Low'].min()
-                pp = ((cp-l6)/(h6-l6)*100) if h6 > l6 else 50
+                pp = ((cp-l6)/(h6-l6)*100) if h6>l6 else 50
                 dp = ((cp-h6)/h6*100)
-                if not (pp < 70 and dp < -25) and not (50 <= pp <= 85): continue
+                if not (pp<70 and dp<-25) and not (50<=pp<=85): continue
                 filtered.append(t)
             except: continue
-        print(f"✅ After filtering: {len(filtered)} tickers")
+        print(f"✅ Filtered: {len(filtered)} tickers")
         
-        print(f"\n🔍 STAGE 3: Scoring {len(filtered)}...")
+        # Scoring
+        print(f"\n🔍 Scoring {len(filtered)}...")
         results = []
         for i, t in enumerate(filtered, 1):
-            if i % 20 == 0: print(f"  Progress: {i}/{len(filtered)}", flush=True)
+            if i%20==0: print(f"  {i}/{len(filtered)}", flush=True)
             df = all_data[t]
             if self.scorer.is_biopharma(t): continue
             try:
                 cp = df['Close'].iloc[-1]; av = df['Volume'].tail(20).mean()
                 h6 = df['High'].max(); l6 = df['Low'].min()
-                pp = ((cp-l6)/(h6-l6)*100) if h6 > l6 else 50
+                pp = ((cp-l6)/(h6-l6)*100) if h6>l6 else 50
                 dp = ((cp-h6)/h6*100)
-                rv = df['Volume'].iloc[-1] / av if av > 0 else 0
+                rv = df['Volume'].iloc[-1]/av if av>0 else 0
                 td = df.iloc[-1]
-                hp = ((td['High']-td['Close'])/td['High']*100) if td['High'] > 0 else 0
-                r = self.scorer.score_ticker_with_data(t, df, cp, pp, dp, rv, hp)
+                hp = ((td['High']-td['Close'])/td['High']*100) if td['High']>0 else 0
+                r = self.scorer.score(t, df, cp, pp, dp, rv, hp)
                 if r and (r['mode_a_qualifies'] or r['mode_b_qualifies']):
-                    m = 'A' if r['mode_a_qualifies'] else 'B'
-                    sc = r[f'mode_{m.lower()}_score']
-                    print(f"    ✅ {t} — MODE {m} (score: {sc})")
                     results.append(r)
             except: continue
         
@@ -454,48 +380,30 @@ class UltimateScanner:
         mb = [r for r in results if r['mode_b_qualifies'] and not r['mode_a_qualifies']]
         ma.sort(key=lambda x: x['mode_a_score'], reverse=True)
         mb.sort(key=lambda x: x['mode_b_score'], reverse=True)
-        ta = ma[:CONFIG['MODE_A']['top_n']]; tb = mb[:CONFIG['MODE_B']['top_n']]
-        print(f"\n🎯 MODE A (SNIPER): {len(ma)} found, top-{len(ta)}")
-        print(f"⚡ MODE B (TACTICAL): {len(mb)} found, top-{len(tb)}")
+        ta, tb = ma[:2], mb[:2]
+        print(f"\n🎯 MODE A: {len(ma)} found, top {len(ta)}")
+        print(f"⚡ MODE B: {len(mb)} found, top {len(tb)}")
         
-        print("\n🧠 STAGE 4: DeepSeek AI...")
-        for r in ta: print(f"  🔴 [A] {r['ticker']}..."); r['ai'] = self.ai.analyze(r['ticker'], r, 'A')
-        for r in tb: print(f"  🟡 [B] {r['ticker']}..."); r['ai'] = self.ai.analyze(r['ticker'], r, 'B')
+        print("\n🧠 AI analysis...")
+        for r in ta: r['ai'] = self.ai.analyze(r['ticker'], r, 'A')
+        for r in tb: r['ai'] = self.ai.analyze(r['ticker'], r, 'B')
         
         ts = datetime.now().strftime('%Y%m%d_%H%M')
-        output = {
-            'timestamp': ts, 'mode_a': ta, 'mode_b': tb,
-            'stats': {'universe_size': len(self.universe), 'loaded': len(all_data), 'filtered': len(filtered), 'mode_a_total': len(ma), 'mode_b_total': len(mb), 'scan_time_sec': round(time.time() - start, 1)}
-        }
-        with open('scan_results.json', 'w', encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
-        with open(f'scan_{ts}.json', 'w', encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
+        output = {'timestamp':ts,'mode_a':ta,'mode_b':tb,'stats':{'universe_size':len(self.universe),'loaded':len(all_data),'filtered':len(filtered),'mode_a_total':len(ma),'mode_b_total':len(mb),'scan_time_sec':round(time.time()-start,1)}}
+        with open('scan_results.json','w',encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
         
-        print("\n" + "="*70)
-        print("🔴 MODE A: SNIPER")
-        print("="*70)
-        if not ma: print("  ⚪ No signals")
-        else:
-            for r in ma:
-                print(f"\n📈 {r['ticker']} | ${r['price']} | Score: {r['mode_a_score']}")
-                for s in r['mode_a_signals'][:5]: print(f"   {s}")
-                if r.get('ai'):
-                    if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
-                    if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
-                    if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
-        print("\n" + "="*70)
-        print("🟡 MODE B: TACTICAL")
-        print("="*70)
-        if not mb: print("  ⚪ No signals")
-        else:
-            for r in mb:
-                print(f"\n📈 {r['ticker']} | ${r['price']} | Score: {r['mode_b_score']}")
-                for s in r['mode_b_signals'][:5]: print(f"   {s}")
-                if r.get('ai'):
-                    if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
-                    if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
-                    if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
-        print(f"\n💾 Saved: scan_results.json")
-        print(f"⏱️  Time: {time.time() - start:.1f} sec")
+        print("\n" + "="*60)
+        for label, arr in [("🔴 MODE A: SNIPER", ma), ("🟡 MODE B: TACTICAL", mb)]:
+            print(label); print("="*60)
+            if not arr: print("  ⚪ No signals")
+            else:
+                for r in arr:
+                    print(f"\n📈 {r['ticker']} | ${r['price']} | Score: {r[f'mode_{label.split()[-1].lower()}_score']}")
+                    for s in r[f'mode_{label.split()[-1].lower()}_signals'][:5]: print(f"   {s}")
+                    if r.get('ai'):
+                        if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
+                        if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
+        print(f"\n💾 Saved: scan_results.json | ⏱️ {time.time()-start:.1f} sec")
         return output
 
 if __name__ == "__main__":
