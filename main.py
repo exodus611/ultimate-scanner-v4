@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Railway Entry Point — v7.21 Thread-Safe"""
+"""Railway Entry Point — v7.22"""
 import os, sys, threading
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -23,11 +23,15 @@ def scanner_task():
         print(f"❌ Scanner error: {e}")
         import traceback; traceback.print_exc()
     finally:
-        scan_lock.release()  # ✅ освобождаем блокировку
+        scan_lock.release()
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    return "<h1>Scanner v7.21</h1><p>POST /api/scan</p>"
+    try:
+        with open("dashboard.html", "r", encoding="utf-8") as f:
+            return f.read()
+    except:
+        return "<h1>Scanner v7.22</h1><p>POST /api/scan</p>"
 
 @app.get("/api/results")
 async def get_results():
@@ -40,10 +44,8 @@ async def health():
 
 @app.post("/api/scan")
 async def trigger_scan():
-    # ✅ Атомарная блокировка
     if not scan_lock.acquire(blocking=False):
         return {"status": "already_running", "message": "Previous scan still in progress"}
-    
     threading.Thread(target=scanner_task, daemon=True).start()
     return {"status": "started"}
 
