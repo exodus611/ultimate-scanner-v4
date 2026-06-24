@@ -1,21 +1,83 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v5.2 — FIXED FOR RAILWAY
+ULTIMATE SCANNER v7.0 — ALPACA EDITION
+Yahoo Finance заблокирован на облачных IP.
+Используем ТОЛЬКО Alpaca Markets (официальный API, не блокирует).
 """
-import os, io, time, json, requests, pandas as pd, numpy as np, yfinance as yf
+import os
+import io
+import time
+import json
+import requests
+import pandas as pd
+import numpy as np
+import yfinance as yf
 from datetime import datetime, timedelta
 from openai import OpenAI
 from typing import Dict, List, Optional
+from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
 CONFIG = {
     'DEEPSEEK_API_KEY': os.getenv('DEEPSEEK_API_KEY', ''),
     'FINNHUB_API_KEY': os.getenv('FINNHUB_API_KEY', ''),
+    'ALPACA_API_KEY': os.getenv('ALPACA_API_KEY', ''),
+    'ALPACA_SECRET_KEY': os.getenv('ALPACA_SECRET_KEY', ''),
     'MODE_A': {'name': 'SNIPER', 'position_size': 2000, 'target_pct': 0.40, 'stop_pct': 0.05, 'min_score': 75, 'hold_days': '3-7', 'top_n': 2},
     'MODE_B': {'name': 'TACTICAL', 'position_size': 1000, 'target_pct': 0.20, 'stop_pct': 0.05, 'min_score': 55, 'hold_days': '1-3', 'top_n': 2},
     'MIN_PRICE': 3.0, 'MIN_VOLUME': 200_000,
     'BANNED_SECTORS': {'Healthcare'},
     'BANNED_INDUSTRIES': {'Biotechnology', 'Drug Manufacturers—General', 'Drug Manufacturers—Specialty & Generic', 'Medical Instruments & Supplies', 'Medical Devices', 'Diagnostics & Research', 'Health Information Services', 'Pharmaceutical Retailers'}
 }
+
+def get_alpaca_client():
+    if not CONFIG['ALPACA_API_KEY'] or not CONFIG['ALPACA_SECRET_KEY']:
+        raise ValueError("ALPACA_API_KEY и ALPACA_SECRET_KEY не установлены в Railway Variables!")
+    return StockHistoricalDataClient(CONFIG['ALPACA_API_KEY'], CONFIG['ALPACA_SECRET_KEY'])
+
+def load_data_via_alpaca(tickers, days=180):
+    """Загрузка OHLCV через Alpaca. Возвращает dict {ticker: DataFrame}"""
+    client = get_alpaca_client()
+    end = datetime.now()
+    start = end - timedelta(days=days)
+    all_data = {}
+    batch_size = 100
+    total_batches = (len(tickers) + batch_size - 1) // batch_size
+    
+    print(f"  📡 Alpaca: {len(tickers)} тикеров, {total_batches} батчей...")
+    
+    for i in range(0, len(tickers), batch_size):
+        batch = tickers[i:i+batch_size]
+        bn = i // batch_size + 1
+        
+        try:
+            request = StockBarsRequest(
+                symbol_or_symbols=batch,
+                timeframe=TimeFrame.Day,
+                start=start,
+                end=end,
+                limit=5000
+            )
+            bars = client.get_stock_bars(request)
+            
+            for symbol in batch:
+                if symbol in bars and bars[symbol]:
+                    data = []
+                    for bar in bars[symbol]:
+                        data.append({
+                            'Open': bar.open, 'High': bar.high,
+                            'Low': bar.low, 'Close': bar.close,
+                            'Volume': bar.volume
+                        })
+                    df = pd.DataFrame(data)
+                    if not df.empty and len(df) >= 50:
+                        all_data[symbol] = df
+            
+            if bn % 10 == 0:
+                print(f"    Progress: {bn}/{total_batches} batches, {len(all_data)} tickers loaded", flush=True)
+        except Exception as e:
+            print(f"    ⚠️ Batch {bn} error: {e}")
+    
+    return all_data
 
 class DeepSeekAnalyzer:
     def __init__(self, api_key: str):
@@ -26,7 +88,7 @@ class DeepSeekAnalyzer:
             f"Senior Quant Analyst. Analyze {ticker} for {mc['name']} mode.\n\n"
             f"DATA: Price ${data.get('price','N/A')} | Position {data.get('position_pct','N/A')}% | Discount {data.get('discount_pct','N/A')}% | RVOL {data.get('rvol','N/A')}x | Options unusual {data.get('unusual_calls',0)} | Insider {data.get('insider_buys',0)} (${data.get('insider_value',0)/1000:.0f}k) | Short {data.get('short_pct','N/A')}% | DarkPool {data.get('dp_ratio','N/A')}% | Congress {data.get('congress_buys',0)} | Earnings {data.get('earnings_surprise','N/A')}% | News {data.get('news_sentiment','N/A')}\n\n"
             f"MODE: ${mc['position_size']} | Target +{mc['target_pct']*100:.0f}% | Stop -{mc['stop_pct']*100:.0f}%\n\n"
-            f"TASK (3 blocks, Russian):\n### 🎯 ТИП СДЕЛКИ:\n[MODE {mode}] | [Тип]\n### 🧠 ФИЗИКА:\n- Что движет\n- Почему сейчас\n- R/R\n### 💥 СИГНАЛ:\n[Сила] | [Действие] | [Стоп $X] | [Цель $X]\n\nBe CONCISE (2-3 sentences per block)."
+            f"TASK (3 blocks, Russian):\n### 🎯 ТИП СДЕЛКИ:\n[MODE {mode}] | [Тип]\n###  ФИЗИКА:\n- Что движет\n- Почему сейчас\n- R/R\n### 💥 СИГНАЛ:\n[Сила] | [Действие] | [Стоп $X] | [Цель $X]\n\nBe CONCISE (2-3 sentences per block)."
         )
         try:
             r = self.client.chat.completions.create(model="deepseek-chat", messages=[{"role":"system","content":"Senior Quant Analyst. Отвечай на русском, кратко."},{"role":"user","content":prompt}], max_tokens=600, temperature=0.3)
@@ -185,7 +247,7 @@ class SignalScorer:
         if f['news_sentiment'] == 'BULLISH': b_s += 15; b_sig.append(f"📰 News: Bullish")
         if s['score'] >= 15: b_s += s['score']; b_sig.append(f"🎯 Short: {s['short_pct']}%")
         if 50 <= pp <= 85: b_s += 15; b_sig.append(f"📊 Position: {pp:.0f}%")
-        if hp < 2: b_s += 10; b_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
+        if hp < 2: b_s += 10; b_sig.append(f" HOD Pinch: {hp:.1f}%")
         return {
             'ticker': ticker, 'price': round(cp, 2), 'position_pct': round(pp, 1), 'discount_pct': round(dp, 1),
             'rvol': round(rv, 2), 'hod_pinch': round(hp, 1),
@@ -220,19 +282,8 @@ class UltimateScanner:
                     at.extend(t); print(f"  ✅ {ex}: {len(t)}")
             except Exception as e: print(f"  ⚠️ {ex}: {e}")
         if len(at) < 100:
-            print("🔄 FTP fallback...")
-            try:
-                import ftplib
-                ftp = ftplib.FTP('ftp.nasdaqtrader.com'); ftp.login(); ftp.cwd('SymbolDirectory')
-                lines = []; ftp.retrlines('RETR nasdaqlisted.txt', lines.append); ftp.quit()
-                for l in lines[1:-1]:
-                    p = l.split('|')
-                    if p and not p[0].endswith('.'): at.append(p[0].strip())
-                print(f"  ✅ FTP: {len(at)}")
-            except: pass
-        if len(at) < 100:
             print("⚠️ Using built-in list...")
-            bi = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC','PYPL','SQ','COIN','MARA','RIOT','PLTR','SOFI','UPST','RIVN','LCID','NIO','XPEV','SNAP','PINS','UBER','LYFT','ABNB','DASH','ROKU','ZM','NFLX','QCOM','AVGO','TXN','AMAT','LRCX','KLAC','ASML','ARM','SMCI','DELL','PANW','CRWD','ZS','FTNT','NOW','ADBE','CRM','ORCL','CSCO','SOUN','OKLO','SMR','BBAI','AI','SHOP','SE','BABA','JD','PDD','BIDU','TSM','BILI','IQ','TCOM','VIPS','W','ETSY','AFRM','HOOD','RBLX','U','SNOW','DDOG','NET','MDB','OKTA','WDAY','TEAM','HUBS','ZS','CRWD','PANW','FTNT','S','TTD','ROKU','SPOT','UBER','SE','CPNG','BABA','JD','PDD','BIDU']
+            bi = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC','PYPL','SQ','COIN','MARA','RIOT','PLTR','SOFI','UPST','RIVN','LCID','NIO','XPEV','SNAP','PINS','UBER','LYFT','ABNB','DASH','ROKU','ZM','NFLX','QCOM','AVGO','TXN','AMAT','LRCX','KLAC','ASML','ARM','SMCI','DELL','PANW','CRWD','ZS','FTNT','NOW','ADBE','CRM','ORCL','CSCO','SOUN','OKLO','SMR','BBAI','AI','SHOP','SE','BABA','JD','PDD','BIDU','TSM','BILI','IQ','TCOM','VIPS','W','ETSY','AFRM','HOOD','RBLX','U','SNOW','DDOG','NET','MDB','OKTA','WDAY','TEAM','HUBS','TTD','SPOT','SE','CPNG']
             at.extend(bi); print(f"  ✅ Built-in: {len(bi)}")
         at = list(set(at))
         pd.DataFrame({'Symbol': at}).to_csv(cache, index=False)
@@ -240,53 +291,21 @@ class UltimateScanner:
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v5.2 — FIXED FOR RAILWAY")
+        print("🎯 ULTIMATE SCANNER v7.0 — ALPACA EDITION")
         print("="*70)
-        print(f"📊 Universe: {len(self.universe)} tickers")
+        print(f" Universe: {len(self.universe)} tickers")
         print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print("\n📥 STAGE 1: Batch loading (small batches)...")
-        batch_size = 50
-        all_data = {}
-        total_batches = (len(self.universe) + batch_size - 1) // batch_size
-        for i in range(0, len(self.universe), batch_size):
-            batch = self.universe[i:i+batch_size]
-            bn = i // batch_size + 1
-            if bn % 10 == 0: print(f"  Progress: {bn}/{total_batches} batches, {len(all_data)} loaded", flush=True)
-            for attempt in range(3):
-                try:
+        
+        print("\n STAGE 1: Loading via Alpaca Markets...")
         try:
-            all_data = fetch_batch_ohlcv(self.universe, days=180)
+            all_data = load_data_via_alpaca(self.universe, days=180)
         except Exception as e:
-            print(f'❌ Ошибка Alpaca: {e}')
+            print(f"❌ Alpaca error: {e}")
+            print("   Убедитесь, что ALPACA_API_KEY и ALPACA_SECRET_KEY добавлены в Railway Variables!")
             all_data = {}
-                    for t in batch:
-                        try:
-                            if isinstance(df.columns, pd.MultiIndex):
-                                if t in df.columns.get_level_values(1):
-                                    td = df.xs(t, axis=1, level=1).dropna()
-                                    if not td.empty and len(td) >= 100: all_data[t] = td
-                            else:
-                                if len(batch) == 1 and not df.empty and len(df) >= 100: all_data[t] = df.dropna()
-                        except: continue
-                    break
-                except:
-                    if attempt < 2: time.sleep(2)
-        print(f"\n✅ Loaded: {len(all_data)} tickers")
-        if len(all_data) < 50:
-            print("⚠️  Few tickers. Loading top popular...")
-            pop = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC','PYPL','SQ','COIN','MARA','RIOT','PLTR','SOFI','UPST','RIVN','LCID','NIO','XPEV','SNAP','PINS','UBER','LYFT','ABNB','DASH','ROKU','ZM','NFLX','QCOM','AVGO','TXN','AMAT','LRCX','KLAC','ASML','ARM','SMCI','DELL','PANW','CRWD','ZS','FTNT','NOW','ADBE','CRM','ORCL','CSCO','SOUN']
-            for t in pop:
-                if t in all_data: continue
-                try:
-        try:
-            all_data = fetch_batch_ohlcv(self.universe, days=180)
-        except Exception as e:
-            print(f'❌ Ошибка Alpaca: {e}')
-            all_data = {}
-                    if not df.empty and len(df) >= 100: all_data[t] = df.dropna()
-                    time.sleep(0.3)
-                except: continue
-            print(f"✅ After fallback: {len(all_data)} tickers")
+        
+        print(f"\n✅ Loaded: {len(all_data)} tickers via Alpaca")
+        
         print("\n🔍 STAGE 2: Filtering...")
         filtered = []
         for t, df in all_data.items():
@@ -300,6 +319,7 @@ class UltimateScanner:
                 filtered.append(t)
             except: continue
         print(f"✅ After filtering: {len(filtered)} tickers")
+        
         print(f"\n🔍 STAGE 3: Scoring {len(filtered)} tickers...")
         results = []
         for i, t in enumerate(filtered, 1):
@@ -321,6 +341,7 @@ class UltimateScanner:
                     print(f"    ✅ {t} — MODE {m} (score: {sc})")
                     results.append(r)
             except: continue
+        
         ma = [r for r in results if r['mode_a_qualifies']]
         mb = [r for r in results if r['mode_b_qualifies'] and not r['mode_a_qualifies']]
         ma.sort(key=lambda x: x['mode_a_score'], reverse=True)
@@ -328,9 +349,11 @@ class UltimateScanner:
         ta = ma[:CONFIG['MODE_A']['top_n']]; tb = mb[:CONFIG['MODE_B']['top_n']]
         print(f"\n🎯 MODE A (SNIPER): {len(ma)} found, top-{len(ta)}")
         print(f"⚡ MODE B (TACTICAL): {len(mb)} found, top-{len(tb)}")
+        
         print("\n🧠 STAGE 4: DeepSeek AI...")
         for r in ta: print(f"  🔴 [A] {r['ticker']}..."); r['ai'] = self.ai.analyze(r['ticker'], r, 'A')
         for r in tb: print(f"  🟡 [B] {r['ticker']}..."); r['ai'] = self.ai.analyze(r['ticker'], r, 'B')
+        
         ts = datetime.now().strftime('%Y%m%d_%H%M')
         output = {
             'timestamp': ts, 'mode_a': ta, 'mode_b': tb,
@@ -338,19 +361,15 @@ class UltimateScanner:
         }
         with open('scan_results.json', 'w', encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
         with open(f'scan_{ts}.json', 'w', encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
-        self._print_results(ta, tb)
-        print(f"\n💾 Saved: scan_results.json")
-        print(f"⏱️  Time: {time.time() - start:.1f} sec")
-        return output
-    def _print_results(self, ma, mb):
+        
         print("\n" + "="*70)
         print("🔴 MODE A: SNIPER (2 tickers, +40%, $2000)")
         print("="*70)
-        if not ma: print("  ⚪ No signals today")
+        if not ma: print("   No signals today")
         else:
             for r in ma:
                 print(f"\n{'─'*70}")
-                print(f"📈 {r['ticker']} | ${r['price']} | Score: {r['mode_a_score']}")
+                print(f" {r['ticker']} | ${r['price']} | Score: {r['mode_a_score']}")
                 print(f"   Position: {r['position_pct']}% | Discount: {r['discount_pct']}% | RVOL: {r['rvol']}x")
                 for s in r['mode_a_signals'][:5]: print(f"   {s}")
                 print(f"{'─'*70}")
@@ -358,8 +377,9 @@ class UltimateScanner:
                     if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
                     if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
+        
         print("\n" + "="*70)
-        print("🟡 MODE B: TACTICAL (2 tickers, +20%, $1000)")
+        print(" MODE B: TACTICAL (2 tickers, +20%, $1000)")
         print("="*70)
         if not mb: print("  ⚪ No signals today")
         else:
@@ -371,12 +391,18 @@ class UltimateScanner:
                 print(f"{'─'*70}")
                 if r.get('ai'):
                     if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
-                    if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
+                    if r['ai']['physics']: print(f" {r['ai']['physics']}")
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
+        
+        print(f"\n💾 Saved: scan_results.json")
+        print(f"⏱️  Time: {time.time() - start:.1f} sec")
+        return output
 
 if __name__ == "__main__":
     if not CONFIG['DEEPSEEK_API_KEY']:
         print("❌ DEEPSEEK_API_KEY not found"); exit(1)
-    if not CONFIG['FINNHUB_API_KEY']:
-        print("⚠️  FINNHUB_API_KEY not found (optional)")
+    if not CONFIG['ALPACA_API_KEY'] or not CONFIG['ALPACA_SECRET_KEY']:
+        print("❌ ALPACA_API_KEY и ALPACA_SECRET_KEY не установлены!")
+        print("   Добавь их в Railway Variables!")
+        exit(1)
     UltimateScanner().run()
