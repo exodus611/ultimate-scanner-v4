@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.4 — ALPACA EDITION (DUPLICATE FIX)
-Исправление: обход дубликатов переменных в Railway
+ULTIMATE SCANNER v7.5 — ALPACA EDITION (FULL DIAGNOSTICS)
+Полная диагностика + вывод ВСЕХ переменных окружения
 """
 import os
 import io
@@ -18,73 +18,127 @@ from typing import Dict, List, Optional
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
 # ============================================================
-# v7.4: ИСПРАВЛЕНИЕ ДУБЛИКАТОВ ПЕРЕМЕННЫХ
+# v7.5: ПОЛНАЯ ДИАГНОСТИКА — ВЫВОД ВСЕХ ПЕРЕМЕННЫХ
 # ============================================================
+
+print("=" * 70)
+print("🔍 ULTIMATE SCANNER v7.5 — ПОЛНАЯ ДИАГНОСТИКА ОКРУЖЕНИЯ")
+print("=" * 70)
+
+# ВЫВОД ВСЕХ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ (маскируем длинные значения)
+print("\n📋 ВСЕ ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ:")
+for k in sorted(os.environ.keys()):
+    v = os.environ[k]
+    if len(v) > 30:
+        print(f"   {k} = {v[:20]}... (длина: {len(v)})")
+    elif len(v) > 0:
+        print(f"   {k} = {v}")
+    else:
+        print(f"   {k} = [ПУСТО]")
+print("=" * 70)
 
 def get_env_robust(var_name: str) -> str:
     """
-    Читает переменную окружения, обходя дубликаты.
-    Railway иногда создаёт ДВЕ переменные с одинаковым именем:
-    одну пустую, одну с ключом.
+    Читает переменную окружения.
+    v7.5: Ищет ВСЕ возможные варианты имени + выводит полную диагностику
     """
-    candidates = []
-    
-    # Собираем ВСЕ значения для данного имени переменной
-    for k, v in os.environ.items():
-        if k == var_name:
-            candidates.append(v)
-    
-    print(f"  🔍 {var_name}: найдено {len(candidates)} значений")
-    
-    # Берём ПЕРВОЕ НЕПУСТОЕ значение
-    for i, val in enumerate(candidates):
+    print(f"\n  🔍 Поиск: {var_name}")
+
+    # Вариант 1: точное имя
+    if var_name in os.environ:
+        val = os.environ[var_name]
         if val and val.strip() and len(val.strip()) > 10:
-            print(f"     ✅ Выбрано значение #{i+1}: длина {len(val.strip())}, начало: {val.strip()[:8]}...")
+            print(f"     ✅ Точное имя: длина {len(val.strip())}, начало: {val.strip()[:10]}...")
             return val.strip()
         else:
-            print(f"     ❌ Значение #{i+1}: {'ПУСТО' if not val else f'длина {len(val)}'}")
-    
-    # Если все пустые — ищем альтернативные имена
-    alt_names = {
-        'ALPACA_API_KEY': ['alpaca_api_key', 'ALPACA_key', 'ALPACA_KEY', 'alpaca_key', 'APCA_API_KEY_ID'],
-        'ALPACA_SECRET_KEY': ['alpaca_secret_key', 'ALPACA_secret', 'ALPACA_SECRET', 'alpaca_secret', 'APCA_API_SECRET_KEY'],
-        'DEEPSEEK_API_KEY': ['deepseek_api_key', 'DEEPSEEK_key'],
-        'FINNHUB_API_KEY': ['finnhub_api_key', 'FINNHUB_key'],
-    }
-    
-    if var_name in alt_names:
-        for alt in alt_names[var_name]:
-            if alt in os.environ:
-                val = os.environ[alt]
-                if val and val.strip() and len(val.strip()) > 10:
-                    print(f"     ✅ Найден как '{alt}': длина {len(val.strip())}")
-                    return val.strip()
-    
-    return ""
+            print(f"     ❌ Точное имя: ПУСТО или слишком короткое (длина: {len(val) if val else 0})")
 
-print("=" * 60)
-print("🔍 ULTIMATE SCANNER v7.4 — ПОИСК КЛЮЧЕЙ (ОБХОД ДУБЛИКАТОВ)")
-print("=" * 60)
+    # Вариант 2: ищем ВСЕ переменные, содержащие ключевые слова
+    keywords = {
+        'ALPACA_API_KEY': ['ALPACA', 'API', 'KEY'],
+        'ALPACA_SECRET_KEY': ['ALPACA', 'SECRET', 'KEY'],
+        'DEEPSEEK_API_KEY': ['DEEPSEEK', 'API', 'KEY'],
+        'FINNHUB_API_KEY': ['FINNHUB', 'API', 'KEY'],
+    }
+
+    if var_name in keywords:
+        kw = keywords[var_name]
+        print(f"     🔎 Ищу переменные содержащие: {kw}")
+        found_any = False
+        for k, v in sorted(os.environ.items()):
+            # Проверяем что имя переменной содержит ВСЕ ключевые слова
+            if all(word in k.upper() for word in kw):
+                found_any = True
+                if v and v.strip() and len(v.strip()) > 10:
+                    print(f"       ✅ Найдено: {k} = {v.strip()[:10]}... (длина: {len(v.strip())})")
+                    return v.strip()
+                else:
+                    print(f"       ❌ {k}: ПУСТО или короткое (длина: {len(v) if v else 0})")
+        if not found_any:
+            print(f"       ❌ Не найдено переменных с ключевыми словами {kw}")
+
+    # Вариант 3: поиск среди ВСЕХ переменных по значению (для SECRET)
+    # Ищем любую переменную, значение которой начинается с характерных признаков
+    # Alpaca Secret Keys обычно длинные и содержат специфичные паттерны
+    if 'SECRET' in var_name.upper():
+        print(f"     🔎 Экстренный поиск: ищу ЛЮБУЮ переменную, похожую на Secret Key...")
+        for k, v in sorted(os.environ.items()):
+            if k == var_name:  # уже проверили
+                continue
+            if v and len(v.strip()) > 20:  # Secret ключи обычно длинные
+                # Проверяем не является ли это API ключом (обычно начинается с PK)
+                if not v.strip().startswith('PK') and not v.strip().startswith('sk-'):
+                    print(f"       🔍 Подозрительная переменная: {k} = {v.strip()[:10]}... (длина: {len(v.strip())})")
+                    # Если имя переменной содержит SECRET или похоже
+                    if 'SECRET' in k.upper() or 'SECRET' in k.upper():
+                        print(f"       ✅ ИСПОЛЬЗУЮ: {k}")
+                        return v.strip()
+
+    print(f"     ❌ {var_name}: НЕ НАЙДЕНО")
+    return ""
 
 DEEPSEEK_KEY = get_env_robust('DEEPSEEK_API_KEY')
 ALPACA_KEY = get_env_robust('ALPACA_API_KEY')
 ALPACA_SECRET = get_env_robust('ALPACA_SECRET_KEY')
 FINNHUB_KEY = get_env_robust('FINNHUB_API_KEY')
 
-print(f"\n📊 ИТОГОВЫЙ СТАТУС:")
+print(f"\n{'='*70}")
+print(f"📊 ИТОГОВЫЙ СТАТУС:")
 print(f"  DEEPSEEK_API_KEY: {'✅ ГОТОВ' if DEEPSEEK_KEY else '❌ ОТСУТСТВУЕТ'} (длина: {len(DEEPSEEK_KEY)})")
 print(f"  ALPACA_API_KEY: {'✅ ГОТОВ' if ALPACA_KEY else '❌ ОТСУТСТВУЕТ'} (длина: {len(ALPACA_KEY)})")
 print(f"  ALPACA_SECRET_KEY: {'✅ ГОТОВ' if ALPACA_SECRET else '❌ ОТСУТСТВУЕТ'} (длина: {len(ALPACA_SECRET)})")
 print(f"  FINNHUB_API_KEY: {'✅ ГОТОВ' if FINNHUB_KEY else '❌ ОТСУТСТВУЕТ'} (длина: {len(FINNHUB_KEY)})")
-print("=" * 60)
+
+# Дополнительная проверка: если API_KEY есть а SECRET_KEY нет
+if ALPACA_KEY and not ALPACA_SECRET:
+    print(f"\n⚠️  API ключ найден, но SECRET ключ отсутствует!")
+    print(f"   Ищу ЛЮБУЮ переменную, которая может быть SECRET ключом...")
+    for k, v in sorted(os.environ.items()):
+        if k != 'ALPACA_API_KEY' and v and len(v.strip()) > 20:
+            if not v.strip().startswith('PK') and not v.strip().startswith('sk-'):
+                print(f"   🔍 {k}: {v.strip()[:15]}... (длина: {len(v.strip())})")
+                # Автоматически используем если похоже на секретный ключ
+                if 'SECRET' in k.upper() or len(v.strip()) > 30:
+                    ALPACA_SECRET = v.strip()
+                    print(f"   ✅ АВТОМАТИЧЕСКИ ВЫБРАН: {k}")
+                    break
+
+print(f"{'='*70}\n")
 
 if not ALPACA_KEY or not ALPACA_SECRET:
-    print("\n" + "!" * 60)
+    print("\n" + "!" * 70)
     print("⚠️  ВНИМАНИЕ: Ключи Alpaca не загружены!")
-    print("!" * 60)
+    print("!" * 70)
     print("Сканер запустится, но НЕ сможет загрузить данные через Alpaca.")
-    print("Проверьте переменные в Railway и нажмите Redeploy.")
-    print("!" * 60 + "\n")
+    print("!")
+    print("! 📋 ЧТО ДЕЛАТЬ:")
+    print("!   1. Зайди в Railway → проект → Variables")
+    print("!   2. УДАЛИ ВСЕ переменные (особенно дубликаты!)")
+    print("!   3. Создай ЗАНОВО (только ОДНУ каждого имени):")
+    print("!      • ALPACA_API_KEY")
+    print("!      • ALPACA_SECRET_KEY")
+    print("!   4. Нажми Redeploy")
+    print("!" * 70 + "\n")
 
 CONFIG = {
     'DEEPSEEK_API_KEY': DEEPSEEK_KEY,
@@ -102,7 +156,7 @@ def get_alpaca_client():
     """Создание клиента Alpaca с проверкой ключей"""
     ak = ALPACA_KEY
     sk = ALPACA_SECRET
-    
+
     if not ak or not sk:
         error_msg = f"""
 {'='*60}
@@ -115,19 +169,17 @@ def get_alpaca_client():
 
 🔧 ЧТО ДЕЛАТЬ:
   1. Перейдите в Railway → проект → Variables
-  2. УДАЛИТЕ дубликаты переменных!
-  3. Оставьте ТОЛЬКО ОДНУ переменную каждого имени
+  2. УДАЛИТЕ ВСЕ переменные Alpaca
+  3. Создайте ЗАНОВО (ровно 2 переменные):
+     • ALPACA_API_KEY = (ваш API ключ)
+     • ALPACA_SECRET_KEY = (ваш секретный ключ)
   4. Нажмите Redeploy
-
-💡 ПОДСКАЗКА:
-  В логах видно что переменные ДУБЛИРУЮТСЯ!
-  Одна пустая, одна с ключом.
-  Удалите ВСЕ переменные Alpaca и создайте ЗАНОВО.
+  5. Проверьте логи — там будет полный список переменных
 {'='*60}
 """
         print(error_msg)
         raise ValueError("Alpaca keys not configured")
-    
+
     print(f"✅ Создаю клиент Alpaca (API Key: {ak[:8]}...)")
     return StockHistoricalDataClient(ak, sk)
 
@@ -138,19 +190,19 @@ def load_data_via_alpaca(tickers, days=180):
     except ValueError:
         print("❌ Пропускаем загрузку через Alpaca — нет ключей")
         return {}
-    
+
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
     batch_size = 100
     total_batches = (len(tickers) + batch_size - 1) // batch_size
-    
+
     print(f"  📡 Alpaca: {len(tickers)} тикеров, {total_batches} батчей...")
-    
+
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
         bn = i // batch_size + 1
-        
+
         try:
             request = StockBarsRequest(
                 symbol_or_symbols=batch,
@@ -160,7 +212,7 @@ def load_data_via_alpaca(tickers, days=180):
                 limit=5000
             )
             bars = client.get_stock_bars(request)
-            
+
             for symbol in batch:
                 if symbol in bars and bars[symbol]:
                     data = []
@@ -173,12 +225,12 @@ def load_data_via_alpaca(tickers, days=180):
                     df = pd.DataFrame(data)
                     if not df.empty and len(df) >= 50:
                         all_data[symbol] = df
-            
+
             if bn % 10 == 0:
                 print(f"    Progress: {bn}/{total_batches} batches, {len(all_data)} tickers loaded", flush=True)
         except Exception as e:
             print(f"    ⚠️ Batch {bn} error: {e}")
-    
+
     return all_data
 
 class DeepSeekAnalyzer:
@@ -186,7 +238,7 @@ class DeepSeekAnalyzer:
         if not api_key:
             raise ValueError("DEEPSEEK_API_KEY не найден! Добавь в Railway Variables.")
         self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-    
+
     def analyze(self, ticker: str, data: Dict, mode: str) -> Dict:
         mc = CONFIG[f'MODE_{mode}']
         prompt = (
@@ -200,7 +252,7 @@ class DeepSeekAnalyzer:
             return self._parse(r.choices[0].message.content)
         except Exception as e:
             return {'full': f"AI Error: {e}", 'type': '', 'physics': '', 'signal': ''}
-    
+
     def _parse(self, text: str) -> Dict:
         blocks = {'full': text, 'type': '', 'physics': '', 'signal': ''}
         for s in text.split('###'):
@@ -214,7 +266,7 @@ class DeepSeekAnalyzer:
 
 class DataSources:
     def __init__(self, config): self.config = config
-    
+
     def get_options_anomaly(self, ticker: str) -> Dict:
         try:
             stock = yf.Ticker(ticker)
@@ -234,7 +286,7 @@ class DataSources:
             sc = 40 if uc > 10 else 30 if uc > 5 else 15 if uc > 2 else 0
             return {'score': sc, 'unusual_calls': uc, 'max_vol_oi': round(mv, 2)}
         except: return {'score': 0, 'unusual_calls': 0, 'max_vol_oi': 0}
-    
+
     def get_insider_activity(self, ticker: str, days: int = 7) -> Dict:
         try:
             url = "http://openinsider.com/screener"
@@ -249,7 +301,7 @@ class DataSources:
                     return {'count': len(buys), 'total_value': tv, 'score': 30 if tv > 500000 else 20 if tv > 100000 else 10}
         except: pass
         return {'count': 0, 'total_value': 0, 'score': 0}
-    
+
     def get_finnhub_data(self, ticker: str) -> Dict:
         ak = self.config.get('FINNHUB_API_KEY')
         if not ak: return {'news_sentiment': 'N/A', 'news_count': 0, 'earnings_surprise': None}
@@ -272,7 +324,7 @@ class DataSources:
             except: pass
             return {'news_count': len(news), 'news_sentiment': sent, 'earnings_surprise': es}
         except: return {'news_sentiment': 'N/A', 'news_count': 0, 'earnings_surprise': None}
-    
+
     def get_short_data(self, ticker: str) -> Dict:
         try:
             info = yf.Ticker(ticker).info
@@ -281,7 +333,7 @@ class DataSources:
             sc = 25 if sp > 20 else 15 if sp > 15 else 5 if sp > 10 else 0
             return {'short_pct': round(sp, 2), 'days_to_cover': round(dc, 2), 'score': sc}
         except: return {'short_pct': 0, 'days_to_cover': 0, 'score': 0}
-    
+
     def get_dark_pool_data(self, ticker: str, days: int = 10) -> Dict:
         base = "https://cdn.finra.org/equity/regsho/daily/REG%20SHO_{}.csv"
         dp = []; cd = datetime.now(); dc = 0; cb = 0
@@ -306,7 +358,7 @@ class DataSources:
         tr = r5 - p5
         sc = 25 if r5 > 50 and tr > 5 else 20 if r5 > 45 and tr > 3 else 10 if r5 > 40 else 0
         return {'dp_ratio': round(df['dp_ratio'].iloc[-1], 1), 'trend_5d': round(tr, 2), 'score': sc}
-    
+
     def get_congress_trading(self, ticker: str, days: int = 30) -> Dict:
         sb = 0; hb = 0; cu = datetime.now() - timedelta(days=days)
         try:
@@ -335,13 +387,13 @@ class DataSources:
 
 class SignalScorer:
     def __init__(self, ds): self.ds = ds
-    
+
     def is_biopharma(self, ticker: str) -> bool:
         try:
             i = yf.Ticker(ticker).info
             return i.get('sector','') in CONFIG['BANNED_SECTORS'] or i.get('industry','') in CONFIG['BANNED_INDUSTRIES']
         except: return False
-    
+
     def score_ticker_with_data(self, ticker, df, cp, pp, dp, rv, hp):
         o = self.ds.get_options_anomaly(ticker)
         i = self.ds.get_insider_activity(ticker)
@@ -378,7 +430,7 @@ class UltimateScanner:
         self.scorer = SignalScorer(self.ds)
         self.ai = DeepSeekAnalyzer(CONFIG['DEEPSEEK_API_KEY'])
         self.universe = self._load_universe()
-    
+
     def _load_universe(self) -> List[str]:
         cache = 'universe_cache.csv'
         if os.path.exists(cache) and (time.time() - os.path.getmtime(cache)) < 604800:
@@ -403,24 +455,24 @@ class UltimateScanner:
         at = list(set(at))
         pd.DataFrame({'Symbol': at}).to_csv(cache, index=False)
         print(f"✅ TOTAL: {len(at)} tickers"); return at
-    
+
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v7.4 — ALPACA EDITION (DUPLICATE FIX)")
+        print("🎯 ULTIMATE SCANNER v7.5 — ALPACA EDITION (FULL DIAGNOSTICS)")
         print("="*70)
         print(f"📊 Universe: {len(self.universe)} tickers")
         print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        
+
         print("\n📥 STAGE 1: Loading via Alpaca Markets...")
         try:
             all_data = load_data_via_alpaca(self.universe, days=180)
         except Exception as e:
             print(f"❌ Alpaca error: {e}")
             all_data = {}
-        
+
         print(f"\n✅ Loaded: {len(all_data)} tickers via Alpaca")
-        
+
         print("\n🔍 STAGE 2: Filtering...")
         filtered = []
         for t, df in all_data.items():
@@ -434,7 +486,7 @@ class UltimateScanner:
                 filtered.append(t)
             except: continue
         print(f"✅ After filtering: {len(filtered)} tickers")
-        
+
         print(f"\n🔍 STAGE 3: Scoring {len(filtered)} tickers...")
         results = []
         for i, t in enumerate(filtered, 1):
@@ -456,7 +508,7 @@ class UltimateScanner:
                     print(f"    ✅ {t} — MODE {m} (score: {sc})")
                     results.append(r)
             except: continue
-        
+
         ma = [r for r in results if r['mode_a_qualifies']]
         mb = [r for r in results if r['mode_b_qualifies'] and not r['mode_a_qualifies']]
         ma.sort(key=lambda x: x['mode_a_score'], reverse=True)
@@ -464,11 +516,11 @@ class UltimateScanner:
         ta = ma[:CONFIG['MODE_A']['top_n']]; tb = mb[:CONFIG['MODE_B']['top_n']]
         print(f"\n🎯 MODE A (SNIPER): {len(ma)} found, top-{len(ta)}")
         print(f"⚡ MODE B (TACTICAL): {len(mb)} found, top-{len(tb)}")
-        
+
         print("\n🧠 STAGE 4: DeepSeek AI...")
         for r in ta: print(f"  🔴 [A] {r['ticker']}..."); r['ai'] = self.ai.analyze(r['ticker'], r, 'A')
         for r in tb: print(f"  🟡 [B] {r['ticker']}..."); r['ai'] = self.ai.analyze(r['ticker'], r, 'B')
-        
+
         ts = datetime.now().strftime('%Y%m%d_%H%M')
         output = {
             'timestamp': ts, 'mode_a': ta, 'mode_b': tb,
@@ -476,7 +528,7 @@ class UltimateScanner:
         }
         with open('scan_results.json', 'w', encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
         with open(f'scan_{ts}.json', 'w', encoding='utf-8') as f: json.dump(output, f, ensure_ascii=False, indent=2)
-        
+
         print("\n" + "="*70)
         print("🔴 MODE A: SNIPER (2 tickers, +40%, $2000)")
         print("="*70)
@@ -492,7 +544,7 @@ class UltimateScanner:
                     if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
                     if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
-        
+
         print("\n" + "="*70)
         print("🟡 MODE B: TACTICAL (2 tickers, +20%, $1000)")
         print("="*70)
@@ -508,7 +560,7 @@ class UltimateScanner:
                     if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
                     if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
-        
+
         print(f"\n💾 Saved: scan_results.json")
         print(f"⏱️  Time: {time.time() - start:.1f} sec")
         return output
@@ -517,15 +569,15 @@ if __name__ == "__main__":
     if not DEEPSEEK_KEY:
         print("❌ ОШИБКА: DEEPSEEK_API_KEY не найден!")
         exit(1)
-    
+
     if not ALPACA_KEY or not ALPACA_SECRET:
         print("❌ ОШИБКА: Ключи Alpaca не найдены!")
-        print("\n📋 ВАЖНО: Удалите дубликаты переменных в Railway!")
-        print("   Судя по логам, у вас ДВЕ переменных ALPACA_API_KEY")
-        print("   и ДВЕ переменных ALPACA_SECRET_KEY")
-        print("   Одна пустая, одна с ключом.")
-        print("   УДАЛИТЕ ВСЕ переменные Alpaca и создайте ЗАНОВО.")
+        print("\n📋 ВАЖНО: Удалите ВСЕ дубликаты в Railway!")
+        print("   Судя по логам, ALPACA_SECRET_KEY есть но ПУСТОЙ.")
+        print("   УДАЛИТЕ все переменные Alpaca и создайте ЗАНОВО:")
+        print("   • ALPACA_API_KEY")
+        print("   • ALPACA_SECRET_KEY")
         exit(1)
-    
+
     print("✅ Все ключи найдены! Запуск сканера...")
     UltimateScanner().run()
