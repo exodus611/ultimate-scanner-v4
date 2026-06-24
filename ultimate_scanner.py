@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.3 — ALPACA EDITION (FINAL FIX)
-Прямое чтение переменных БЕЗ функций-посредников
+ULTIMATE SCANNER v7.4 — ALPACA EDITION (DUPLICATE FIX)
+Исправление: обход дубликатов переменных в Railway
 """
 import os
 import io
@@ -18,129 +18,66 @@ from typing import Dict, List, Optional
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
 # ============================================================
-# ФИНАЛЬНОЕ ИСПРАВЛЕНИЕ: ПРЯМОЕ ЧТЕНИЕ БЕЗ ФУНКЦИЙ
+# v7.4: ИСПРАВЛЕНИЕ ДУБЛИКАТОВ ПЕРЕМЕННЫХ
 # ============================================================
 
-print("=" * 60)
-print("🔍 ULTIMATE SCANNER v7.3 — ПРЯМОЕ ЧТЕНИЕ ПЕРЕМЕННЫХ")
-print("=" * 60)
-
-# Инициализируем пустыми строками
-DEEPSEEK_KEY = ""
-ALPACA_KEY = ""
-ALPACA_SECRET = ""
-FINNHUB_KEY = ""
-
-# Читаем DEEPSEEK_API_KEY
-try:
-    raw_val = os.environ['DEEPSEEK_API_KEY']
-    if raw_val and len(raw_val.strip()) > 10:
-        DEEPSEEK_KEY = raw_val.strip()
-        print(f"✅ DEEPSEEK_API_KEY: НАЙДЕН (длина: {len(DEEPSEEK_KEY)} символов)")
-    else:
-        print(f"❌ DEEPSEEK_API_KEY: значение слишком короткое или пустое (длина: {len(raw_val) if raw_val else 0})")
-except KeyError:
-    print("❌ DEEPSEEK_API_KEY: переменная отсутствует в окружении")
-except Exception as e:
-    print(f"❌ DEEPSEEK_API_KEY: ошибка чтения - {e}")
-
-# Читаем ALPACA_API_KEY
-try:
-    raw_val = os.environ['ALPACA_API_KEY']
-    if raw_val and len(raw_val.strip()) > 10:
-        ALPACA_KEY = raw_val.strip()
-        print(f"✅ ALPACA_API_KEY: НАЙДЕН (длина: {len(ALPACA_KEY)} символов, начало: {ALPACA_KEY[:8]}...)")
-    else:
-        print(f"❌ ALPACA_API_KEY: значение слишком короткое или пустое (длина: {len(raw_val) if raw_val else 0})")
-        # Ищем альтернативные имена
-        for alt in ['alpaca_api_key', 'ALPACA_key', 'ALPACA_KEY', 'alpaca_key']:
-            if alt in os.environ:
-                val = os.environ[alt]
-                if val and len(val.strip()) > 10:
-                    ALPACA_KEY = val.strip()
-                    print(f"   ✅ Найден как '{alt}'! (начало: {ALPACA_KEY[:8]}...)")
-                    break
-except KeyError:
-    print("❌ ALPACA_API_KEY: переменная отсутствует в окружении")
-    # Ищем альтернативные имена
-    for alt in ['alpaca_api_key', 'ALPACA_key', 'ALPACA_KEY', 'alpaca_key']:
-        if alt in os.environ:
-            val = os.environ[alt]
-            if val and len(val.strip()) > 10:
-                ALPACA_KEY = val.strip()
-                print(f"   ✅ Найден как '{alt}'! (начало: {ALPACA_KEY[:8]}...)")
-                break
-except Exception as e:
-    print(f"❌ ALPACA_API_KEY: ошибка чтения - {e}")
-
-# Читаем ALPACA_SECRET_KEY
-try:
-    raw_val = os.environ['ALPACA_SECRET_KEY']
-    if raw_val and len(raw_val.strip()) > 10:
-        ALPACA_SECRET = raw_val.strip()
-        print(f"✅ ALPACA_SECRET_KEY: НАЙДЕН (длина: {len(ALPACA_SECRET)} символов)")
-    else:
-        print(f"❌ ALPACA_SECRET_KEY: значение слишком короткое или пустое (длина: {len(raw_val) if raw_val else 0})")
-        # Ищем альтернативные имена
-        for alt in ['alpaca_secret_key', 'ALPACA_secret', 'ALPACA_SECRET', 'alpaca_secret']:
-            if alt in os.environ:
-                val = os.environ[alt]
-                if val and len(val.strip()) > 10:
-                    ALPACA_SECRET = val.strip()
-                    print(f"   ✅ Найден как '{alt}'!")
-                    break
-except KeyError:
-    print("❌ ALPACA_SECRET_KEY: переменная отсутствует в окружении")
-    # Ищем альтернативные имена
-    for alt in ['alpaca_secret_key', 'ALPACA_secret', 'ALPACA_SECRET', 'alpaca_secret']:
-        if alt in os.environ:
-            val = os.environ[alt]
-            if val and len(val.strip()) > 10:
-                ALPACA_SECRET = val.strip()
-                print(f"   ✅ Найден как '{alt}'!")
-                break
-except Exception as e:
-    print(f"❌ ALPACA_SECRET_KEY: ошибка чтения - {e}")
-
-# Читаем FINNHUB_API_KEY
-try:
-    raw_val = os.environ['FINNHUB_API_KEY']
-    if raw_val and len(raw_val.strip()) > 10:
-        FINNHUB_KEY = raw_val.strip()
-        print(f"✅ FINNHUB_API_KEY: НАЙДЕН (длина: {len(FINNHUB_KEY)} символов)")
-    else:
-        print(f"❌ FINNHUB_API_KEY: значение слишком короткое или пустое (длина: {len(raw_val) if raw_val else 0})")
-except KeyError:
-    print("❌ FINNHUB_API_KEY: переменная отсутствует в окружении")
-except Exception as e:
-    print(f"❌ FINNHUB_API_KEY: ошибка чтения - {e}")
-
-# ДИАГНОСТИКА: выводим все переменные, содержащие KEY или SECRET
-print(f"\n📋 ДИАГНОСТИКА: Все переменные с KEY/SECRET/ALPACA в имени:")
-found_any = False
-for k in sorted(os.environ.keys()):
-    if any(x in k.upper() for x in ['ALPACA', 'API', 'SECRET', 'KEY', 'DEEPSEEK', 'FINNHUB']):
-        v = os.environ[k]
-        found_any = True
-        if v:
-            print(f"   • {k} = {v[:20]}... (длина: {len(v)})")
+def get_env_robust(var_name: str) -> str:
+    """
+    Читает переменную окружения, обходя дубликаты.
+    Railway иногда создаёт ДВЕ переменные с одинаковым именем:
+    одну пустую, одну с ключом.
+    """
+    candidates = []
+    
+    # Собираем ВСЕ значения для данного имени переменной
+    for k, v in os.environ.items():
+        if k == var_name:
+            candidates.append(v)
+    
+    print(f"  🔍 {var_name}: найдено {len(candidates)} значений")
+    
+    # Берём ПЕРВОЕ НЕПУСТОЕ значение
+    for i, val in enumerate(candidates):
+        if val and val.strip() and len(val.strip()) > 10:
+            print(f"     ✅ Выбрано значение #{i+1}: длина {len(val.strip())}, начало: {val.strip()[:8]}...")
+            return val.strip()
         else:
-            print(f"   • {k} = ПУСТО")
-if not found_any:
-    print("   ❌ НЕ НАЙДЕНО НИ ОДНОЙ СВЯЗАННОЙ ПЕРЕМЕННОЙ!")
-    print("   📌 Проверьте Railway Variables:")
-    print("      - ALPACA_API_KEY")
-    print("      - ALPACA_SECRET_KEY")
-    print("      - DEEPSEEK_API_KEY")
+            print(f"     ❌ Значение #{i+1}: {'ПУСТО' if not val else f'длина {len(val)}'}")
+    
+    # Если все пустые — ищем альтернативные имена
+    alt_names = {
+        'ALPACA_API_KEY': ['alpaca_api_key', 'ALPACA_key', 'ALPACA_KEY', 'alpaca_key', 'APCA_API_KEY_ID'],
+        'ALPACA_SECRET_KEY': ['alpaca_secret_key', 'ALPACA_secret', 'ALPACA_SECRET', 'alpaca_secret', 'APCA_API_SECRET_KEY'],
+        'DEEPSEEK_API_KEY': ['deepseek_api_key', 'DEEPSEEK_key'],
+        'FINNHUB_API_KEY': ['finnhub_api_key', 'FINNHUB_key'],
+    }
+    
+    if var_name in alt_names:
+        for alt in alt_names[var_name]:
+            if alt in os.environ:
+                val = os.environ[alt]
+                if val and val.strip() and len(val.strip()) > 10:
+                    print(f"     ✅ Найден как '{alt}': длина {len(val.strip())}")
+                    return val.strip()
+    
+    return ""
+
+print("=" * 60)
+print("🔍 ULTIMATE SCANNER v7.4 — ПОИСК КЛЮЧЕЙ (ОБХОД ДУБЛИКАТОВ)")
+print("=" * 60)
+
+DEEPSEEK_KEY = get_env_robust('DEEPSEEK_API_KEY')
+ALPACA_KEY = get_env_robust('ALPACA_API_KEY')
+ALPACA_SECRET = get_env_robust('ALPACA_SECRET_KEY')
+FINNHUB_KEY = get_env_robust('FINNHUB_API_KEY')
 
 print(f"\n📊 ИТОГОВЫЙ СТАТУС:")
-print(f"  DEEPSEEK_API_KEY: {'✅ ГОТОВ' if DEEPSEEK_KEY else '❌ ОТСУТСТВУЕТ'}")
-print(f"  ALPACA_API_KEY: {'✅ ГОТОВ' if ALPACA_KEY else '❌ ОТСУТСТВУЕТ'}")
-print(f"  ALPACA_SECRET_KEY: {'✅ ГОТОВ' if ALPACA_SECRET else '❌ ОТСУТСТВУЕТ'}")
-print(f"  FINNHUB_API_KEY: {'✅ ГОТОВ' if FINNHUB_KEY else '❌ ОТСУТСТВУЕТ'}")
+print(f"  DEEPSEEK_API_KEY: {'✅ ГОТОВ' if DEEPSEEK_KEY else '❌ ОТСУТСТВУЕТ'} (длина: {len(DEEPSEEK_KEY)})")
+print(f"  ALPACA_API_KEY: {'✅ ГОТОВ' if ALPACA_KEY else '❌ ОТСУТСТВУЕТ'} (длина: {len(ALPACA_KEY)})")
+print(f"  ALPACA_SECRET_KEY: {'✅ ГОТОВ' if ALPACA_SECRET else '❌ ОТСУТСТВУЕТ'} (длина: {len(ALPACA_SECRET)})")
+print(f"  FINNHUB_API_KEY: {'✅ ГОТОВ' if FINNHUB_KEY else '❌ ОТСУТСТВУЕТ'} (длина: {len(FINNHUB_KEY)})")
 print("=" * 60)
 
-# СРАЗУ ПРОВЕРЯЕМ И ВЫВОДИМ ПРЕДУПРЕЖДЕНИЕ
 if not ALPACA_KEY or not ALPACA_SECRET:
     print("\n" + "!" * 60)
     print("⚠️  ВНИМАНИЕ: Ключи Alpaca не загружены!")
@@ -163,7 +100,6 @@ CONFIG = {
 
 def get_alpaca_client():
     """Создание клиента Alpaca с проверкой ключей"""
-    # Используем глобальные переменные НАПРЯМУЮ
     ak = ALPACA_KEY
     sk = ALPACA_SECRET
     
@@ -179,15 +115,14 @@ def get_alpaca_client():
 
 🔧 ЧТО ДЕЛАТЬ:
   1. Перейдите в Railway → проект → Variables
-  2. Убедитесь, что есть ТОЧНО такие переменные:
-     • ALPACA_API_KEY
-     • ALPACA_SECRET_KEY
-  3. Проверьте, что значения не пустые
+  2. УДАЛИТЕ дубликаты переменных!
+  3. Оставьте ТОЛЬКО ОДНУ переменную каждого имени
   4. Нажмите Redeploy
 
 💡 ПОДСКАЗКА:
-  API Key начинается с "PK..."
-  Secret Key — длинная строка
+  В логах видно что переменные ДУБЛИРУЮТСЯ!
+  Одна пустая, одна с ключом.
+  Удалите ВСЕ переменные Alpaca и создайте ЗАНОВО.
 {'='*60}
 """
         print(error_msg)
@@ -472,7 +407,7 @@ class UltimateScanner:
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v7.3 — ALPACA EDITION (FINAL FIX)")
+        print("🎯 ULTIMATE SCANNER v7.4 — ALPACA EDITION (DUPLICATE FIX)")
         print("="*70)
         print(f"📊 Universe: {len(self.universe)} tickers")
         print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -579,23 +514,17 @@ class UltimateScanner:
         return output
 
 if __name__ == "__main__":
-    # ПРОВЕРКА КЛЮЧЕЙ ПЕРЕД ЗАПУСКОМ
     if not DEEPSEEK_KEY:
         print("❌ ОШИБКА: DEEPSEEK_API_KEY не найден!")
-        print("   Добавь в Railway Variables: DEEPSEEK_API_KEY")
         exit(1)
     
     if not ALPACA_KEY or not ALPACA_SECRET:
         print("❌ ОШИБКА: Ключи Alpaca не найдены!")
-        print("\n📋 ПРОВЕРЬ СЛЕДУЮЩЕЕ:")
-        print("1. Зайди в Railway → твой проект → Variables")
-        print("2. Убедись что добавлены ДВЕ переменные (ТОЧНО ТАК):")
-        print("   • ALPACA_API_KEY (значение начинается с PK...)")
-        print("   • ALPACA_SECRET_KEY (длинная строка)")
-        print("3. Нажми Redeploy после добавления")
-        print(f"\nТекущие значения:")
-        print(f"  ALPACA_API_KEY: {ALPACA_KEY[:15] + '...' if ALPACA_KEY else 'ПУСТО'}")
-        print(f"  ALPACA_SECRET_KEY: {ALPACA_SECRET[:15] + '...' if ALPACA_SECRET else 'ПУСТО'}")
+        print("\n📋 ВАЖНО: Удалите дубликаты переменных в Railway!")
+        print("   Судя по логам, у вас ДВЕ переменных ALPACA_API_KEY")
+        print("   и ДВЕ переменных ALPACA_SECRET_KEY")
+        print("   Одна пустая, одна с ключом.")
+        print("   УДАЛИТЕ ВСЕ переменные Alpaca и создайте ЗАНОВО.")
         exit(1)
     
     print("✅ Все ключи найдены! Запуск сканера...")
