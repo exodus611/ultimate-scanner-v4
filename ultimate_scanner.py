@@ -1,44 +1,23 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.18 — ALPACA DATA FIX
-Исправлена загрузка данных через Alpaca (feed=iex, правильный BarSet)
+ULTIMATE SCANNER v7.19 — FULL STABLE RELEASE
+Стабильная Alpaca + полные фильтры + DeepSeek AI
 """
-import os, io, time, json, sys, traceback, requests
+import os, time, json, requests, traceback
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
 from openai import OpenAI
-from typing import Dict, List
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 import warnings
 warnings.filterwarnings("ignore")
 
 print("=" * 60)
-print("ULTIMATE SCANNER v7.18 — ALPACA DATA FIX")
+print("ULTIMATE SCANNER v7.19 — FULL STABLE")
 print("=" * 60)
 
-# ========== КЛЮЧИ ==========
-def get_env_final(var_name):
-    candidates = []
-    for k, v in os.environ.items():
-        if k == var_name:
-            candidates.append(v)
-    for val in candidates:
-        if val and val.strip() and len(val.strip()) > 10:
-            return val.strip()
-    return ""
-
-ALPACA_KEY = get_env_final('ALPACA_API_KEY')
-ALPACA_SECRET = get_env_final('ALPACA_SECRET_KEY')
-DEEPSEEK_KEY = get_env_final('DEEPSEEK_API_KEY')
-FINNHUB_KEY = get_env_final('FINNHUB_API_KEY')
-USE_ALPACA = bool(ALPACA_KEY and ALPACA_SECRET)
-
-print(f"Alpaca: {'✅' if USE_ALPACA else '❌'}")
-print(f"DeepSeek: {'✅' if DEEPSEEK_KEY else '❌'}")
-print(f"Finnhub: {'✅' if FINNHUB_KEY else '❌'}")
-
+# ========== КОНФИГУРАЦИЯ ==========
 CONFIG = {
     'MODE_A': {'name': 'SNIPER', 'position_size': 2000, 'target_pct': 0.40, 'stop_pct': 0.05, 'min_score': 75, 'hold_days': '3-7', 'top_n': 2},
     'MODE_B': {'name': 'TACTICAL', 'position_size': 1000, 'target_pct': 0.20, 'stop_pct': 0.05, 'min_score': 55, 'hold_days': '1-3', 'top_n': 2},
@@ -47,7 +26,18 @@ CONFIG = {
     'BANNED_INDUSTRIES': {'Biotechnology', 'Drug Manufacturers—General', 'Drug Manufacturers—Specialty & Generic', 'Medical Instruments & Supplies', 'Medical Devices', 'Diagnostics & Research', 'Health Information Services', 'Pharmaceutical Retailers'}
 }
 
-# ========== ВСЕЛЕННАЯ (ALPACA) ==========
+# Чтение переменных окружения
+ALPACA_KEY = os.environ.get('ALPACA_API_KEY', '').strip()
+ALPACA_SECRET = os.environ.get('ALPACA_SECRET_KEY', '').strip()
+DEEPSEEK_KEY = os.environ.get('DEEPSEEK_API_KEY', '').strip()
+FINNHUB_KEY = os.environ.get('FINNHUB_API_KEY', '').strip()
+USE_ALPACA = bool(ALPACA_KEY and ALPACA_SECRET)
+
+print(f"Alpaca: {'✅' if USE_ALPACA else '❌'}")
+print(f"DeepSeek: {'✅' if DEEPSEEK_KEY else '❌'}")
+print(f"Finnhub: {'✅' if FINNHUB_KEY else '❌'}")
+
+# ========== ВСЕЛЕННАЯ ==========
 def load_universe():
     cache_file = 'universe_cache.csv'
     if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 86400:
@@ -59,7 +49,7 @@ def load_universe():
         print("🔄 Загрузка вселенной через Alpaca API...")
         try:
             headers = {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
-            params = {"status": "active", "asset_class": "us_equity", "exchange": "NASDAQ,NYSE,ARCA", "tradable": "true"}
+            params = {"status": "active", "asset_class": "us_equity", "tradable": "true"}
             resp = requests.get("https://paper-api.alpaca.markets/v2/assets", headers=headers, params=params, timeout=30)
             resp.raise_for_status()
             tickers = [a['symbol'] for a in resp.json() if a.get('symbol')]
@@ -68,32 +58,26 @@ def load_universe():
                 print(f"  ✅ Alpaca: {len(tickers)} тикеров")
                 return tickers
         except Exception as e:
-            print(f"  ❌ Alpaca error: {e}")
+            print(f"  ❌ Alpaca Universe Error: {e}")
     
     # Фолбэк
     tickers = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC']
     print(f"⚠️ Фолбэк: {len(tickers)} тикеров")
     return tickers
 
-# ========== ЗАГРУЗКА ДАННЫХ (ALPACA + YAHOO FALLBACK) ==========
+# ========== ЗАГРУЗКА ДАННЫХ (ALPACA) ==========
 def load_data_alpaca(tickers, days=60):
-    """Загрузка через Alpaca с IEX фидом"""
     if not USE_ALPACA:
         return {}
     
-    try:
-        client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
-    except Exception as e:
-        print(f"  ❌ Alpaca client: {e}")
-        return {}
-    
+    client = StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
-    batch_size = 100
+    batch_size = 50
     total = (len(tickers) + batch_size - 1) // batch_size
     
-    print(f"  📡 Alpaca: {len(tickers)} тикеров, {total} батчей, feed=IEX")
+    print(f"📡 Загрузка {len(tickers)} тикеров через Alpaca (IEX)...")
     
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
@@ -105,51 +89,36 @@ def load_data_alpaca(tickers, days=60):
                 timeframe=TimeFrame.Day,
                 start=start,
                 end=end,
-                limit=10000,
-                feed='iex'  # КЛЮЧЕВОЕ: IEX для бесплатных
+                feed='iex'
             )
             bars = client.get_stock_bars(request)
             
-            # Правильная проверка BarSet
-            try:
-                symbols_in_response = list(bars.data.keys())
-            except:
-                symbols_in_response = []
-            
-            if bn == 1:
-                print(f"    🔍 Батч 1: {len(symbols_in_response)} символов в ответе")
-                if symbols_in_response:
-                    print(f"    Пример: {symbols_in_response[0]}")
-            
             for symbol in batch:
-                if symbol in symbols_in_response:
-                    bar_list = bars.data[symbol]
-                    data = []
-                    for bar in bar_list:
-                        data.append({
-                            'Open': bar.open, 'High': bar.high,
-                            'Low': bar.low, 'Close': bar.close,
-                            'Volume': bar.volume
-                        })
-                    df = pd.DataFrame(data)
-                    if not df.empty and len(df) >= 50:
+                data_list = bars.data.get(symbol)
+                if data_list:
+                    df = pd.DataFrame([{
+                        'Open': b.open, 'High': b.high,
+                        'Low': b.low, 'Close': b.close,
+                        'Volume': b.volume
+                    } for b in data_list])
+                    if len(df) >= 50:
                         all_data[symbol] = df
             
-            if bn % 10 == 0:
-                print(f"    {bn}/{total} батчей, {len(all_data)} тикеров")
-            
-            if bn < total:
-                time.sleep(0.3)  # rate limit
-            
+            if bn % 20 == 0:
+                print(f"  {bn}/{total} батчей, загружено {len(all_data)} тикеров")
         except Exception as e:
-            print(f"    ⚠️ Батч {bn}: {e}")
-            time.sleep(0.5)
+            if bn == 1:
+                print(f"  ⚠️ Ошибка первого батча: {e}")
+            continue
+        
+        time.sleep(0.5)  # rate limit
     
+    print(f"✅ Alpaca загружено: {len(all_data)} тикеров")
     return all_data
 
+# ========== ЗАГРУЗКА ДАННЫХ (YAHOO FALLBACK) ==========
 def load_data_yahoo(tickers, days=60):
-    """Фолбэк через Yahoo"""
-    print(f"  📡 Yahoo: {len(tickers)} тикеров...")
+    print(f"📡 Yahoo Finance: {len(tickers)} тикеров...")
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
@@ -169,9 +138,10 @@ def load_data_yahoo(tickers, days=60):
         except:
             pass
     
+    print(f"✅ Yahoo загружено: {len(all_data)} тикеров")
     return all_data
 
-# ========== ИСТОЧНИКИ ДАННЫХ ==========
+# ========== ИСТОЧНИКИ ДАННЫХ ДЛЯ СКОРИНГА ==========
 class DataSources:
     def get_options_anomaly(self, ticker):
         try:
@@ -246,32 +216,30 @@ class SignalScorer:
         dk = self.ds.get_dark_pool_data(ticker)
         c = self.ds.get_congress_trading(ticker)
         
-        # MODE A: SNIPER (инсайдерские + альтернативные сигналы)
         a_s, a_sig = 0, []
-        if o['score'] >= 30: a_s += o['score']; a_sig.append(f"⚡ Options: {o['unusual_calls']} unusual")
-        if i['score'] >= 20: a_s += i['score']; a_sig.append(f"💼 Insider: {i['count']} buys (${i['total_value']/1000:.0f}k)")
-        if dk['score'] >= 15: a_s += dk['score']; a_sig.append(f"🌑 Dark Pool")
-        if c['score'] >= 15: a_s += c['score']; a_sig.append(f"🏛️ Congress: {c['total_buys']} buys")
-        if rv > 2.5: a_s += 20; a_sig.append(f"📈 RVOL: {rv:.1f}x")
-        if 20 <= pp <= 50: a_s += 25; a_sig.append(f"📍 Position: {pp:.0f}% (низ)")
-        if dp < -15: a_s += 20; a_sig.append(f"📉 Discount: {dp:.1f}%")
-        if hp < 2: a_s += 15; a_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
+        if o['score']>=30: a_s+=o['score']; a_sig.append(f"⚡ Options: {o['unusual_calls']} unusual")
+        if i['score']>=20: a_s+=i['score']; a_sig.append(f"💼 Insider: {i['count']} buys (${i['total_value']/1000:.0f}k)")
+        if dk['score']>=15: a_s+=dk['score']; a_sig.append(f"🌑 Dark Pool")
+        if c['score']>=15: a_s+=c['score']; a_sig.append(f"🏛️ Congress: {c['total_buys']} buys")
+        if rv>2.5: a_s+=20; a_sig.append(f"📈 RVOL: {rv:.1f}x")
+        if 20<=pp<=50: a_s+=25; a_sig.append(f"📍 Position: {pp:.0f}% (низ)")
+        if dp<-15: a_s+=20; a_sig.append(f"📉 Discount: {dp:.1f}%")
+        if hp<2: a_s+=15; a_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
         
-        # MODE B: TACTICAL (трендовые + моментум)
         b_s, b_sig = 0, []
-        if rv > 2.5: b_s += 25; b_sig.append(f"📈 RVOL: {rv:.1f}x")
-        elif rv > 2.0: b_s += 15; b_sig.append(f"📈 RVOL: {rv:.1f}x")
-        if f['earnings_surprise'] and f['earnings_surprise'] > 10: b_s += 25; b_sig.append(f"💰 Earnings: +{f['earnings_surprise']:.1f}%")
-        if f['news_sentiment'] == 'BULLISH': b_s += 15; b_sig.append(f"📰 News: Bullish")
-        if s['score'] >= 15: b_s += s['score']; b_sig.append(f"🎯 Short: {s['short_pct']}%")
-        if 50 <= pp <= 85: b_s += 15; b_sig.append(f"📊 Position: {pp:.0f}%")
-        if hp < 2: b_s += 10; b_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
+        if rv>2.5: b_s+=25; b_sig.append(f"📈 RVOL: {rv:.1f}x")
+        elif rv>2.0: b_s+=15; b_sig.append(f"📈 RVOL: {rv:.1f}x")
+        if f['earnings_surprise'] and f['earnings_surprise']>10: b_s+=25; b_sig.append(f"💰 Earnings: +{f['earnings_surprise']:.1f}%")
+        if f['news_sentiment']=='BULLISH': b_s+=15; b_sig.append(f"📰 News: Bullish")
+        if s['score']>=15: b_s+=s['score']; b_sig.append(f"🎯 Short: {s['short_pct']}%")
+        if 50<=pp<=85: b_s+=15; b_sig.append(f"📊 Position: {pp:.0f}%")
+        if hp<2: b_s+=10; b_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
         
         return {
-            'ticker': ticker, 'price': round(cp, 2), 'position_pct': round(pp, 1), 'discount_pct': round(dp, 1),
-            'rvol': round(rv, 2), 'hod_pinch': round(hp, 1),
-            'mode_a_score': a_s, 'mode_a_signals': a_sig, 'mode_a_qualifies': a_s >= CONFIG['MODE_A']['min_score'],
-            'mode_b_score': b_s, 'mode_b_signals': b_sig, 'mode_b_qualifies': b_s >= CONFIG['MODE_B']['min_score'],
+            'ticker': ticker, 'price': round(cp,2), 'position_pct': round(pp,1), 'discount_pct': round(dp,1),
+            'rvol': round(rv,2), 'hod_pinch': round(hp,1),
+            'mode_a_score': a_s, 'mode_a_signals': a_sig, 'mode_a_qualifies': a_s>=CONFIG['MODE_A']['min_score'],
+            'mode_b_score': b_s, 'mode_b_signals': b_sig, 'mode_b_qualifies': b_s>=CONFIG['MODE_B']['min_score'],
             'unusual_calls': o['unusual_calls'], 'insider_buys': i['count'], 'insider_value': i['total_value'],
             'short_pct': s['short_pct'], 'dp_ratio': dk['dp_ratio'], 'congress_buys': c['total_buys'],
             'earnings_surprise': f['earnings_surprise'], 'news_sentiment': f['news_sentiment']
@@ -284,7 +252,7 @@ class DeepSeekAI:
     
     def analyze(self, ticker, data, mode):
         if not self.client:
-            return {'type': '', 'physics': '', 'signal': ''}
+            return {'type':'','physics':'','signal':''}
         mc = CONFIG[f'MODE_{mode}']
         prompt = (
             f"Senior Quant. Analyze {ticker} for {mc['name']}.\n"
@@ -302,20 +270,20 @@ class DeepSeekAI:
                 elif 'сигнал' in s.lower(): blocks['signal'] = s.split('\n',1)[-1].strip()
             return blocks
         except:
-            return {'type': '', 'physics': '', 'signal': ''}
+            return {'type':'','physics':'','signal':''}
 
 # ========== ГЛАВНЫЙ ЦИКЛ ==========
 def run_scanner():
     start_time = time.time()
     print("=" * 60)
-    print("🎯 ULTIMATE SCANNER v7.18")
+    print("🎯 ULTIMATE SCANNER v7.19")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     
     # 1. Вселенная
     universe = load_universe()
     
-    # 2. Данные (Alpaca, затем Yahoo)
+    # 2. Данные
     print("\n📥 Загрузка данных...")
     all_data = load_data_alpaca(universe, days=60)
     if not all_data:
@@ -378,12 +346,11 @@ def run_scanner():
     for r in ta: r['ai'] = ai.analyze(r['ticker'], r, 'A')
     for r in tb: r['ai'] = ai.analyze(r['ticker'], r, 'B')
     
-    # 6. Вывод
+    # 6. Сохранение
     ts = datetime.now().strftime('%Y%m%d_%H%M')
     output = {
         'timestamp': ts,
-        'mode_a': ta,
-        'mode_b': tb,
+        'mode_a': ta, 'mode_b': tb,
         'stats': {
             'universe': len(universe),
             'loaded': len(all_data),
@@ -397,6 +364,7 @@ def run_scanner():
     with open('scan_results.json', 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
+    # 7. Вывод
     for label, arr, mode in [("🔴 MODE A: SNIPER", ma, 'A'), ("🟡 MODE B: TACTICAL", mb, 'B')]:
         print(f"\n{'='*60}")
         print(f"{label} (найдено {len(arr)})")

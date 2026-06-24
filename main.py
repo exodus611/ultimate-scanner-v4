@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Railway Entry Point"""
+"""Railway Entry Point — v7.19"""
 import os, sys, threading
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +26,7 @@ def scanner_task():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    return "<h1>Scanner v7.18</h1><p>POST /api/scan</p>"
+    return "<h1>Scanner v7.19</h1><p>POST /api/scan</p>"
 
 @app.get("/api/results")
 async def get_results():
