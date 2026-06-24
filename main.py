@@ -8,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 
-from ultimate_scanner import UltimateScanner, CONFIG
+from ultimate_scanner import UltimateScanner, CONFIG, DEEPSEEK_KEY, ALPACA_KEY, ALPACA_SECRET
 
 app = FastAPI(title="Ultimate Scanner Dashboard")
 scan_results = {"mode_a": [], "mode_b": [], "stats": {}, "timestamp": ""}
@@ -20,9 +20,9 @@ def run_scanner():
     print(f"🚀 Запуск сканера: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("="*70)
     try:
-        if not CONFIG['DEEPSEEK_API_KEY']:
-            print(" DEEPSEEK_API_KEY not found"); return
-        if not CONFIG['ALPACA_API_KEY'] or not CONFIG['ALPACA_SECRET_KEY']:
+        if not DEEPSEEK_KEY:
+            print("❌ DEEPSEEK_API_KEY not found"); return
+        if not ALPACA_KEY or not ALPACA_SECRET:
             print("❌ ALPACA keys not found"); return
         scanner = UltimateScanner()
         results = scanner.run()

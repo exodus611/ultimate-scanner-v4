@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.0 — ALPACA EDITION
-Yahoo Finance заблокирован на облачных IP.
-Используем ТОЛЬКО Alpaca Markets (официальный API, не блокирует).
+ULTIMATE SCANNER v7.1 — ALPACA EDITION (FIXED)
+Исправлено чтение переменных окружения Railway
 """
 import os
 import io
@@ -17,11 +16,22 @@ from openai import OpenAI
 from typing import Dict, List, Optional
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
+# Читаем переменные окружения ПРЯМО СЕЙЧАС
+DEEPSEEK_KEY = os.environ.get('DEEPSEEK_API_KEY') or os.getenv('DEEPSEEK_API_KEY', '')
+FINNHUB_KEY = os.environ.get('FINNHUB_API_KEY') or os.getenv('FINNHUB_API_KEY', '')
+ALPACA_KEY = os.environ.get('ALPACA_API_KEY') or os.getenv('ALPACA_API_KEY', '')
+ALPACA_SECRET = os.environ.get('ALPACA_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY', '')
+
+print(f"🔍 Проверка ключей...")
+print(f"  DEEPSEEK_API_KEY: {'✅' if DEEPSEEK_KEY else '❌'}")
+print(f"  ALPACA_API_KEY: {'✅' if ALPACA_KEY else '❌'}")
+print(f"  ALPACA_SECRET_KEY: {'✅' if ALPACA_SECRET else '❌'}")
+
 CONFIG = {
-    'DEEPSEEK_API_KEY': os.getenv('DEEPSEEK_API_KEY', ''),
-    'FINNHUB_API_KEY': os.getenv('FINNHUB_API_KEY', ''),
-    'ALPACA_API_KEY': os.getenv('ALPACA_API_KEY', ''),
-    'ALPACA_SECRET_KEY': os.getenv('ALPACA_SECRET_KEY', ''),
+    'DEEPSEEK_API_KEY': DEEPSEEK_KEY,
+    'FINNHUB_API_KEY': FINNHUB_KEY,
+    'ALPACA_API_KEY': ALPACA_KEY,
+    'ALPACA_SECRET_KEY': ALPACA_SECRET,
     'MODE_A': {'name': 'SNIPER', 'position_size': 2000, 'target_pct': 0.40, 'stop_pct': 0.05, 'min_score': 75, 'hold_days': '3-7', 'top_n': 2},
     'MODE_B': {'name': 'TACTICAL', 'position_size': 1000, 'target_pct': 0.20, 'stop_pct': 0.05, 'min_score': 55, 'hold_days': '1-3', 'top_n': 2},
     'MIN_PRICE': 3.0, 'MIN_VOLUME': 200_000,
@@ -30,9 +40,23 @@ CONFIG = {
 }
 
 def get_alpaca_client():
-    if not CONFIG['ALPACA_API_KEY'] or not CONFIG['ALPACA_SECRET_KEY']:
-        raise ValueError("ALPACA_API_KEY и ALPACA_SECRET_KEY не установлены в Railway Variables!")
-    return StockHistoricalDataClient(CONFIG['ALPACA_API_KEY'], CONFIG['ALPACA_SECRET_KEY'])
+    if not ALPACA_KEY or not ALPACA_SECRET:
+        error_msg = """
+❌ ОШИБКА: Ключи Alpaca не найдены!
+
+ПРОВЕРЬ СЛЕДУЮЩЕЕ:
+1. Зайди в Railway → твой проект → Variables
+2. Убедись что добавлены ДВЕ переменные (ТОЧНО ТАК):
+   • ALPACA_API_KEY (значение начинается с PK...)
+   • ALPACA_SECRET_KEY (значение начинается с ...)
+3. Нажми Redeploy после добавления
+
+Текущие значения:
+  ALPACA_API_KEY: {ak}
+  ALPACA_SECRET_KEY: {as_}
+""".format(ak=ALPACA_KEY[:10] + "..." if ALPACA_KEY else "ПУСТО", as_=ALPACA_SECRET[:10] + "..." if ALPACA_SECRET else "ПУСТО")
+        raise ValueError(error_msg)
+    return StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
 
 def load_data_via_alpaca(tickers, days=180):
     """Загрузка OHLCV через Alpaca. Возвращает dict {ticker: DataFrame}"""
@@ -81,20 +105,24 @@ def load_data_via_alpaca(tickers, days=180):
 
 class DeepSeekAnalyzer:
     def __init__(self, api_key: str):
+        if not api_key:
+            raise ValueError("DEEPSEEK_API_KEY не найден! Добавь в Railway Variables.")
         self.client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    
     def analyze(self, ticker: str, data: Dict, mode: str) -> Dict:
         mc = CONFIG[f'MODE_{mode}']
         prompt = (
             f"Senior Quant Analyst. Analyze {ticker} for {mc['name']} mode.\n\n"
             f"DATA: Price ${data.get('price','N/A')} | Position {data.get('position_pct','N/A')}% | Discount {data.get('discount_pct','N/A')}% | RVOL {data.get('rvol','N/A')}x | Options unusual {data.get('unusual_calls',0)} | Insider {data.get('insider_buys',0)} (${data.get('insider_value',0)/1000:.0f}k) | Short {data.get('short_pct','N/A')}% | DarkPool {data.get('dp_ratio','N/A')}% | Congress {data.get('congress_buys',0)} | Earnings {data.get('earnings_surprise','N/A')}% | News {data.get('news_sentiment','N/A')}\n\n"
             f"MODE: ${mc['position_size']} | Target +{mc['target_pct']*100:.0f}% | Stop -{mc['stop_pct']*100:.0f}%\n\n"
-            f"TASK (3 blocks, Russian):\n### 🎯 ТИП СДЕЛКИ:\n[MODE {mode}] | [Тип]\n###  ФИЗИКА:\n- Что движет\n- Почему сейчас\n- R/R\n### 💥 СИГНАЛ:\n[Сила] | [Действие] | [Стоп $X] | [Цель $X]\n\nBe CONCISE (2-3 sentences per block)."
+            f"TASK (3 blocks, Russian):\n### 🎯 ТИП СДЕЛКИ:\n[MODE {mode}] | [Тип]\n### 🧠 ФИЗИКА:\n- Что движет\n- Почему сейчас\n- R/R\n### 💥 СИГНАЛ:\n[Сила] | [Действие] | [Стоп $X] | [Цель $X]\n\nBe CONCISE (2-3 sentences per block)."
         )
         try:
             r = self.client.chat.completions.create(model="deepseek-chat", messages=[{"role":"system","content":"Senior Quant Analyst. Отвечай на русском, кратко."},{"role":"user","content":prompt}], max_tokens=600, temperature=0.3)
             return self._parse(r.choices[0].message.content)
         except Exception as e:
             return {'full': f"AI Error: {e}", 'type': '', 'physics': '', 'signal': ''}
+    
     def _parse(self, text: str) -> Dict:
         blocks = {'full': text, 'type': '', 'physics': '', 'signal': ''}
         for s in text.split('###'):
@@ -108,6 +136,7 @@ class DeepSeekAnalyzer:
 
 class DataSources:
     def __init__(self, config): self.config = config
+    
     def get_options_anomaly(self, ticker: str) -> Dict:
         try:
             stock = yf.Ticker(ticker)
@@ -127,6 +156,7 @@ class DataSources:
             sc = 40 if uc > 10 else 30 if uc > 5 else 15 if uc > 2 else 0
             return {'score': sc, 'unusual_calls': uc, 'max_vol_oi': round(mv, 2)}
         except: return {'score': 0, 'unusual_calls': 0, 'max_vol_oi': 0}
+    
     def get_insider_activity(self, ticker: str, days: int = 7) -> Dict:
         try:
             url = "http://openinsider.com/screener"
@@ -141,6 +171,7 @@ class DataSources:
                     return {'count': len(buys), 'total_value': tv, 'score': 30 if tv > 500000 else 20 if tv > 100000 else 10}
         except: pass
         return {'count': 0, 'total_value': 0, 'score': 0}
+    
     def get_finnhub_data(self, ticker: str) -> Dict:
         ak = self.config.get('FINNHUB_API_KEY')
         if not ak: return {'news_sentiment': 'N/A', 'news_count': 0, 'earnings_surprise': None}
@@ -163,6 +194,7 @@ class DataSources:
             except: pass
             return {'news_count': len(news), 'news_sentiment': sent, 'earnings_surprise': es}
         except: return {'news_sentiment': 'N/A', 'news_count': 0, 'earnings_surprise': None}
+    
     def get_short_data(self, ticker: str) -> Dict:
         try:
             info = yf.Ticker(ticker).info
@@ -171,6 +203,7 @@ class DataSources:
             sc = 25 if sp > 20 else 15 if sp > 15 else 5 if sp > 10 else 0
             return {'short_pct': round(sp, 2), 'days_to_cover': round(dc, 2), 'score': sc}
         except: return {'short_pct': 0, 'days_to_cover': 0, 'score': 0}
+    
     def get_dark_pool_data(self, ticker: str, days: int = 10) -> Dict:
         base = "https://cdn.finra.org/equity/regsho/daily/REG%20SHO_{}.csv"
         dp = []; cd = datetime.now(); dc = 0; cb = 0
@@ -195,6 +228,7 @@ class DataSources:
         tr = r5 - p5
         sc = 25 if r5 > 50 and tr > 5 else 20 if r5 > 45 and tr > 3 else 10 if r5 > 40 else 0
         return {'dp_ratio': round(df['dp_ratio'].iloc[-1], 1), 'trend_5d': round(tr, 2), 'score': sc}
+    
     def get_congress_trading(self, ticker: str, days: int = 30) -> Dict:
         sb = 0; hb = 0; cu = datetime.now() - timedelta(days=days)
         try:
@@ -223,11 +257,13 @@ class DataSources:
 
 class SignalScorer:
     def __init__(self, ds): self.ds = ds
+    
     def is_biopharma(self, ticker: str) -> bool:
         try:
             i = yf.Ticker(ticker).info
             return i.get('sector','') in CONFIG['BANNED_SECTORS'] or i.get('industry','') in CONFIG['BANNED_INDUSTRIES']
         except: return False
+    
     def score_ticker_with_data(self, ticker, df, cp, pp, dp, rv, hp):
         o = self.ds.get_options_anomaly(ticker)
         i = self.ds.get_insider_activity(ticker)
@@ -247,7 +283,7 @@ class SignalScorer:
         if f['news_sentiment'] == 'BULLISH': b_s += 15; b_sig.append(f"📰 News: Bullish")
         if s['score'] >= 15: b_s += s['score']; b_sig.append(f"🎯 Short: {s['short_pct']}%")
         if 50 <= pp <= 85: b_s += 15; b_sig.append(f"📊 Position: {pp:.0f}%")
-        if hp < 2: b_s += 10; b_sig.append(f" HOD Pinch: {hp:.1f}%")
+        if hp < 2: b_s += 10; b_sig.append(f"🎯 HOD Pinch: {hp:.1f}%")
         return {
             'ticker': ticker, 'price': round(cp, 2), 'position_pct': round(pp, 1), 'discount_pct': round(dp, 1),
             'rvol': round(rv, 2), 'hod_pinch': round(hp, 1),
@@ -264,6 +300,7 @@ class UltimateScanner:
         self.scorer = SignalScorer(self.ds)
         self.ai = DeepSeekAnalyzer(CONFIG['DEEPSEEK_API_KEY'])
         self.universe = self._load_universe()
+    
     def _load_universe(self) -> List[str]:
         cache = 'universe_cache.csv'
         if os.path.exists(cache) and (time.time() - os.path.getmtime(cache)) < 604800:
@@ -288,20 +325,20 @@ class UltimateScanner:
         at = list(set(at))
         pd.DataFrame({'Symbol': at}).to_csv(cache, index=False)
         print(f"✅ TOTAL: {len(at)} tickers"); return at
+    
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v7.0 — ALPACA EDITION")
+        print("🎯 ULTIMATE SCANNER v7.1 — ALPACA EDITION (FIXED)")
         print("="*70)
-        print(f" Universe: {len(self.universe)} tickers")
+        print(f"📊 Universe: {len(self.universe)} tickers")
         print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         
-        print("\n STAGE 1: Loading via Alpaca Markets...")
+        print("\n📥 STAGE 1: Loading via Alpaca Markets...")
         try:
             all_data = load_data_via_alpaca(self.universe, days=180)
         except Exception as e:
             print(f"❌ Alpaca error: {e}")
-            print("   Убедитесь, что ALPACA_API_KEY и ALPACA_SECRET_KEY добавлены в Railway Variables!")
             all_data = {}
         
         print(f"\n✅ Loaded: {len(all_data)} tickers via Alpaca")
@@ -365,11 +402,11 @@ class UltimateScanner:
         print("\n" + "="*70)
         print("🔴 MODE A: SNIPER (2 tickers, +40%, $2000)")
         print("="*70)
-        if not ma: print("   No signals today")
+        if not ma: print("  ⚪ No signals today")
         else:
             for r in ma:
                 print(f"\n{'─'*70}")
-                print(f" {r['ticker']} | ${r['price']} | Score: {r['mode_a_score']}")
+                print(f"📈 {r['ticker']} | ${r['price']} | Score: {r['mode_a_score']}")
                 print(f"   Position: {r['position_pct']}% | Discount: {r['discount_pct']}% | RVOL: {r['rvol']}x")
                 for s in r['mode_a_signals'][:5]: print(f"   {s}")
                 print(f"{'─'*70}")
@@ -379,7 +416,7 @@ class UltimateScanner:
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
         
         print("\n" + "="*70)
-        print(" MODE B: TACTICAL (2 tickers, +20%, $1000)")
+        print("🟡 MODE B: TACTICAL (2 tickers, +20%, $1000)")
         print("="*70)
         if not mb: print("  ⚪ No signals today")
         else:
@@ -391,7 +428,7 @@ class UltimateScanner:
                 print(f"{'─'*70}")
                 if r.get('ai'):
                     if r['ai']['type']: print(f"🎯 {r['ai']['type']}")
-                    if r['ai']['physics']: print(f" {r['ai']['physics']}")
+                    if r['ai']['physics']: print(f"🧠 {r['ai']['physics']}")
                     if r['ai']['signal']: print(f"💥 {r['ai']['signal']}")
         
         print(f"\n💾 Saved: scan_results.json")
@@ -399,10 +436,24 @@ class UltimateScanner:
         return output
 
 if __name__ == "__main__":
-    if not CONFIG['DEEPSEEK_API_KEY']:
-        print("❌ DEEPSEEK_API_KEY not found"); exit(1)
-    if not CONFIG['ALPACA_API_KEY'] or not CONFIG['ALPACA_SECRET_KEY']:
-        print("❌ ALPACA_API_KEY и ALPACA_SECRET_KEY не установлены!")
-        print("   Добавь их в Railway Variables!")
+    # ПРОВЕРКА КЛЮЧЕЙ ПЕРЕД ЗАПУСКОМ
+    if not DEEPSEEK_KEY:
+        print("❌ ОШИБКА: DEEPSEEK_API_KEY не найден!")
+        print("   Добавь в Railway Variables: DEEPSEEK_API_KEY")
         exit(1)
+    
+    if not ALPACA_KEY or not ALPACA_SECRET:
+        print("❌ ОШИБКА: Ключи Alpaca не найдены!")
+        print("\n📋 ПРОВЕРЬ СЛЕДУЮЩЕЕ:")
+        print("1. Зайди в Railway → твой проект → Variables")
+        print("2. Убедись что добавлены ДВЕ переменные (ТОЧНО ТАК):")
+        print("   • ALPACA_API_KEY (значение начинается с PK...)")
+        print("   • ALPACA_SECRET_KEY (длинная строка)")
+        print("3. Нажми Redeploy после добавления")
+        print(f"\nТекущие значения:")
+        print(f"  ALPACA_API_KEY: {ALPACA_KEY[:15] + '...' if ALPACA_KEY else 'ПУСТО'}")
+        print(f"  ALPACA_SECRET_KEY: {ALPACA_SECRET[:15] + '...' if ALPACA_SECRET else 'ПУСТО'}")
+        exit(1)
+    
+    print("✅ Все ключи найдены! Запуск сканера...")
     UltimateScanner().run()
