@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
-"""Railway Entry Point — v7.12 with concurrency guard"""
 import os, sys, threading
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
-from ultimate_scanner import UltimateScanner, DEEPSEEK_KEY, ALPACA_KEY, ALPACA_SECRET
+from ultimate_scanner import UltimateScanner, DEEPSEEK_KEY
 
 app = FastAPI(title="Scanner Dashboard")
-scan_results = {"mode_a":[],"mode_b":[],"stats":{},"timestamp":""}
+scan_results = {"signals": [], "stats": {}, "timestamp": ""}
 scan_lock = threading.Lock()
 is_running = False
 
 def run_scanner():
     global scan_results, is_running
     try:
-        if not DEEPSEEK_KEY:
-            print("❌ DEEPSEEK_API_KEY missing"); return
         scanner = UltimateScanner()
         results = scanner.run()
         with scan_lock:
@@ -30,11 +27,7 @@ def run_scanner():
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    try:
-        with open("dashboard.html", "r", encoding="utf-8") as f:
-            return f.read()
-    except:
-        return "<h1>Dashboard not found</h1>"
+    return "<h1>Scanner v7.13</h1><p>POST /api/scan to start</p>"
 
 @app.get("/api/results")
 async def get_results():
@@ -49,8 +42,7 @@ async def health():
 async def trigger_scan():
     global is_running
     if is_running:
-        return {"status":"already_running","message":"Previous scan still in progress"}
-    
+        return {"status":"already_running"}
     is_running = True
     threading.Thread(target=run_scanner, daemon=True).start()
     return {"status":"started"}
@@ -58,5 +50,4 @@ async def trigger_scan():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     print(f"🌐 Dashboard: http://0.0.0.0:{port}")
-    print("📌 POST /api/scan to start")
     uvicorn.run(app, host="0.0.0.0", port=port)
