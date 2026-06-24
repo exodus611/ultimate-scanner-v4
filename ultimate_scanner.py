@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.1 — ALPACA EDITION (FIXED)
-Исправлено чтение переменных окружения Railway
+ULTIMATE SCANNER v7.2 — ALPACA EDITION (RADICAL FIX)
+Радикальное исправление чтения переменных окружения Railway
 """
 import os
 import io
 import time
 import json
+import sys
 import requests
 import pandas as pd
 import numpy as np
@@ -16,16 +17,100 @@ from openai import OpenAI
 from typing import Dict, List, Optional
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
-# Читаем переменные окружения ПРЯМО СЕЙЧАС
-DEEPSEEK_KEY = os.environ.get('DEEPSEEK_API_KEY') or os.getenv('DEEPSEEK_API_KEY', '')
-FINNHUB_KEY = os.environ.get('FINNHUB_API_KEY') or os.getenv('FINNHUB_API_KEY', '')
-ALPACA_KEY = os.environ.get('ALPACA_API_KEY') or os.getenv('ALPACA_API_KEY', '')
-ALPACA_SECRET = os.environ.get('ALPACA_SECRET_KEY') or os.getenv('ALPACA_SECRET_KEY', '')
+# ============================================================
+# РАДИКАЛЬНОЕ ИСПРАВЛЕНИЕ ЧТЕНИЯ ПЕРЕМЕННЫХ ОКРУЖЕНИЯ
+# ============================================================
 
-print(f"🔍 Проверка ключей...")
-print(f"  DEEPSEEK_API_KEY: {'✅' if DEEPSEEK_KEY else '❌'}")
-print(f"  ALPACA_API_KEY: {'✅' if ALPACA_KEY else '❌'}")
-print(f"  ALPACA_SECRET_KEY: {'✅' if ALPACA_SECRET else '❌'}")
+def force_read_env(var_name: str) -> str:
+    """Принудительное чтение переменной окружения с диагностикой"""
+    value = None
+    
+    # Метод 1: os.environ (прямой доступ к словарю)
+    try:
+        value = os.environ[var_name]
+        print(f"  ✅ [1] os.environ: {var_name} = {value[:15]}...")
+        return value
+    except KeyError:
+        print(f"  ❌ [1] os.environ: {var_name} НЕТ В СЛОВАРЕ")
+    
+    # Метод 2: os.getenv
+    try:
+        value = os.getenv(var_name)
+        if value:
+            print(f"  ✅ [2] os.getenv: {var_name} = {value[:15]}...")
+            return value
+        else:
+            print(f"  ❌ [2] os.getenv: {var_name} = None/пусто")
+    except Exception as e:
+        print(f"  ❌ [2] os.getenv ошибка: {e}")
+    
+    # Метод 3: Прямой доступ к environ.get
+    try:
+        value = os.environ.get(var_name)
+        if value:
+            print(f"  ✅ [3] environ.get: {var_name} = {value[:15]}...")
+            return value
+        else:
+            print(f"  ❌ [3] environ.get: {var_name} = None/пусто")
+    except Exception as e:
+        print(f"  ❌ [3] environ.get ошибка: {e}")
+    
+    # Метод 4: Чтение из /proc (Linux/Railway)
+    try:
+        with open('/proc/self/environ', 'r') as f:
+            env_data = f.read()
+            for item in env_data.split('\x00'):
+                if '=' in item:
+                    k, v = item.split('=', 1)
+                    if k == var_name:
+                        print(f"  ✅ [4] /proc: {var_name} = {v[:15]}...")
+                        return v
+        print(f"  ❌ [4] /proc: {var_name} не найден")
+    except Exception as e:
+        print(f"  ❌ [4] /proc ошибка: {e}")
+    
+    # Метод 5: Прямой вызов из shell
+    try:
+        import subprocess
+        result = subprocess.run(['printenv', var_name], capture_output=True, text=True)
+        value = result.stdout.strip()
+        if value:
+            print(f"  ✅ [5] printenv: {var_name} = {value[:15]}...")
+            return value
+        else:
+            print(f"  ❌ [5] printenv: пусто")
+    except Exception as e:
+        print(f"  ❌ [5] printenv ошибка: {e}")
+    
+    # ДИАГНОСТИКА: Вывод ВСЕХ переменных, связанных с ключами
+    print(f"\n  📋 ДИАГНОСТИКА: Поиск всех связанных переменных:")
+    all_vars = {}
+    for k, v in sorted(os.environ.items()):
+        if any(x in k.upper() for x in ['ALPACA', 'DEEPSEEK', 'API', 'SECRET', 'KEY', 'FINNHUB']):
+            all_vars[k] = v[:20] + "..." if len(v) > 20 else v
+            print(f"     • {k} = {all_vars[k]}")
+    
+    if not all_vars:
+        print("     ❌ НЕ НАЙДЕНО НИ ОДНОЙ СВЯЗАННОЙ ПЕРЕМЕННОЙ!")
+        print("     📌 Проверь Railway → Variables → добавь переменные")
+    
+    return value or ""
+
+print("=" * 60)
+print("🔍 ULTIMATE SCANNER v7.2 — ДИАГНОСТИКА ПЕРЕМЕННЫХ")
+print("=" * 60)
+
+DEEPSEEK_KEY = force_read_env('DEEPSEEK_API_KEY')
+ALPACA_KEY = force_read_env('ALPACA_API_KEY')
+ALPACA_SECRET = force_read_env('ALPACA_SECRET_KEY')
+FINNHUB_KEY = force_read_env('FINNHUB_API_KEY')
+
+print(f"\n📊 ИТОГИ ЧТЕНИЯ:")
+print(f"  DEEPSEEK_API_KEY: {'✅ НАЙДЕН' if DEEPSEEK_KEY else '❌ ПУСТО'}")
+print(f"  ALPACA_API_KEY: {'✅ НАЙДЕН' if ALPACA_KEY else '❌ ПУСТО'}")
+print(f"  ALPACA_SECRET_KEY: {'✅ НАЙДЕН' if ALPACA_SECRET else '❌ ПУСТО'}")
+print(f"  FINNHUB_API_KEY: {'✅ НАЙДЕН' if FINNHUB_KEY else '❌ ПУСТО'}")
+print("=" * 60)
 
 CONFIG = {
     'DEEPSEEK_API_KEY': DEEPSEEK_KEY,
@@ -42,20 +127,31 @@ CONFIG = {
 def get_alpaca_client():
     if not ALPACA_KEY or not ALPACA_SECRET:
         error_msg = """
-❌ ОШИБКА: Ключи Alpaca не найдены!
+❌ КРИТИЧЕСКАЯ ОШИБКА: Ключи Alpaca не найдены!
 
-ПРОВЕРЬ СЛЕДУЮЩЕЕ:
+📋 ЧТО ДЕЛАТЬ:
 1. Зайди в Railway → твой проект → Variables
-2. Убедись что добавлены ДВЕ переменные (ТОЧНО ТАК):
-   • ALPACA_API_KEY (значение начинается с PK...)
-   • ALPACA_SECRET_KEY (значение начинается с ...)
-3. Нажми Redeploy после добавления
+2. Проверь, что переменные называются ТОЧНО так (РЕГИСТР ВАЖЕН!):
+   • ALPACA_API_KEY
+   • ALPACA_SECRET_KEY
+3. Если имена правильные — нажми Redeploy
+4. Если не помогло — удали переменные и создай заново
 
-Текущие значения:
+🔍 ТЕКУЩИЕ ЗНАЧЕНИЯ:
   ALPACA_API_KEY: {ak}
   ALPACA_SECRET_KEY: {as_}
-""".format(ak=ALPACA_KEY[:10] + "..." if ALPACA_KEY else "ПУСТО", as_=ALPACA_SECRET[:10] + "..." if ALPACA_SECRET else "ПУСТО")
+  
+💡 ПОДСКАЗКА: 
+  - API Key начинается с "PK..."
+  - Secret Key — длинная строка без пробелов
+""".format(
+            ak=ALPACA_KEY[:15] + "..." if ALPACA_KEY else "❌ ПУСТО",
+            as_=ALPACA_SECRET[:15] + "..." if ALPACA_SECRET else "❌ ПУСТО"
+        )
+        print(error_msg)
         raise ValueError(error_msg)
+    
+    print("✅ Alpaca client создан успешно")
     return StockHistoricalDataClient(ALPACA_KEY, ALPACA_SECRET)
 
 def load_data_via_alpaca(tickers, days=180):
@@ -329,7 +425,7 @@ class UltimateScanner:
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v7.1 — ALPACA EDITION (FIXED)")
+        print("🎯 ULTIMATE SCANNER v7.2 — ALPACA EDITION (RADICAL FIX)")
         print("="*70)
         print(f"📊 Universe: {len(self.universe)} tickers")
         print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
