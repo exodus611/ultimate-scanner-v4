@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Railway Entry Point"""
+"""Railway Entry Point — v7.8 Manual Start"""
 import os, sys, threading, time
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -56,9 +56,8 @@ async def trigger_scan():
     return {"status": "started", "message": "Scan triggered"}
 
 if __name__ == "__main__":
-    print("🚀 Starting scanner in background...")
-    scanner_thread = threading.Thread(target=run_scanner, daemon=True)
-    scanner_thread.start()
+    # НЕ запускаем сканер автоматически
     port = int(os.environ.get("PORT", 8000))
-    print(f"\n🌐 Dashboard: http://0.0.0.0:{port}")
+    print(f"🌐 Dashboard: http://0.0.0.0:{port}")
+    print("📌 Сканер запускается вручную: POST /api/scan")
     uvicorn.run(app, host="0.0.0.0", port=port)
