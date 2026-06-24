@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.9 — ALPACA EDITION (EXCHANGE FILTER + DEBUG)
-- Возвращаем фильтр по биржам (NASDAQ, NYSE, ARCA)
-- Добавляем отладку первого батча
+ULTIMATE SCANNER v7.10 — FIX DUPLICATE ENV VARS
+Собирает ВСЕ значения переменной, берёт первое НЕПУСТОЕ.
 """
 import os
 import io
@@ -19,55 +18,56 @@ from openai import OpenAI
 from typing import Dict, List, Optional
 from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
 
-# ============================================================
-# ПОЛНАЯ ДИАГНОСТИКА ОКРУЖЕНИЯ
-# ============================================================
-
 print("=" * 70)
-print("🔍 ULTIMATE SCANNER v7.9 — ДИАГНОСТИКА ОКРУЖЕНИЯ")
+print("🔍 ULTIMATE SCANNER v7.10 — ФИНАЛЬНАЯ ДИАГНОСТИКА")
 print("=" * 70)
 
-print("\n📋 ПЕРЕМЕННЫЕ ОКРУЖЕНИЯ (только важные):")
-for k in sorted(os.environ.keys()):
-    if any(x in k.upper() for x in ['ALPACA','DEEPSEEK','FINNHUB','KEY','SECRET','FEED']):
-        v = os.environ[k]
-        if len(v) > 30:
-            print(f"   {k} = {v[:20]}... (длина: {len(v)})")
-        elif v:
-            print(f"   {k} = {v}")
-        else:
-            print(f"   {k} = [ПУСТО]")
-print("=" * 70)
-
-def get_env_robust(var_name: str) -> str:
-    print(f"  🔍 {var_name}...", end=" ")
-    if var_name in os.environ:
-        val = os.environ[var_name]
+def get_env_final(var_name: str) -> str:
+    """Собирает ВСЕ значения переменной, возвращает первое НЕПУСТОЕ длиной > 10"""
+    candidates = []
+    for k, v in os.environ.items():
+        if k == var_name:
+            candidates.append(v)
+    
+    print(f"  🔍 {var_name}: найдено {len(candidates)} значений")
+    for i, val in enumerate(candidates):
         if val and val.strip() and len(val.strip()) > 10:
-            print(f"✅ ({len(val.strip())} симв.)")
+            print(f"     ✅ #{i+1}: длина {len(val.strip())}, начало {val.strip()[:8]}...")
             return val.strip()
         else:
-            print(f"❌ ПУСТО")
-    else:
-        # поиск среди похожих
-        for k, v in os.environ.items():
-            if var_name.upper() in k.upper() and v and len(v.strip()) > 10:
-                print(f"✅ через {k} ({len(v.strip())} симв.)")
-                return v.strip()
-        print(f"❌ не найдено")
+            print(f"     ❌ #{i+1}: {'ПУСТО' if not val else f'короткое ({len(val)} симв.)'}")
+    
+    # Если не нашли — поиск по ключевым словам
+    keywords_map = {
+        'ALPACA_API_KEY': ['ALPACA','API','KEY'],
+        'ALPACA_SECRET_KEY': ['ALPACA','SECRET','KEY'],
+        'DEEPSEEK_API_KEY': ['DEEPSEEK','API','KEY'],
+        'FINNHUB_API_KEY': ['FINNHUB','API','KEY'],
+    }
+    if var_name in keywords_map:
+        kw = keywords_map[var_name]
+        print(f"     🔎 Альтернативный поиск: {kw}")
+        for k, v in sorted(os.environ.items()):
+            if all(w in k.upper() for w in kw):
+                if v and v.strip() and len(v.strip()) > 10:
+                    print(f"       ✅ Найдено через {k}: длина {len(v.strip())}")
+                    return v.strip()
+    print(f"     ❌ Не найдено подходящее значение")
     return ""
 
-DEEPSEEK_KEY = get_env_robust('DEEPSEEK_API_KEY')
-ALPACA_KEY = get_env_robust('ALPACA_API_KEY')
-ALPACA_SECRET = get_env_robust('ALPACA_SECRET_KEY')
-FINNHUB_KEY = get_env_robust('FINNHUB_API_KEY')
+DEEPSEEK_KEY = get_env_final('DEEPSEEK_API_KEY')
+ALPACA_KEY = get_env_final('ALPACA_API_KEY')
+ALPACA_SECRET = get_env_final('ALPACA_SECRET_KEY')
+FINNHUB_KEY = get_env_final('FINNHUB_API_KEY')
 ALPACA_FEED = os.environ.get('ALPACA_DATA_FEED', 'iex').lower()
 
-print(f"  Alpaca Feed: {ALPACA_FEED.upper()}")
-print(f"  DEEPSEEK: {'✅' if DEEPSEEK_KEY else '❌'}")
-print(f"  ALPACA_API_KEY: {'✅' if ALPACA_KEY else '❌'}")
-print(f"  ALPACA_SECRET_KEY: {'✅' if ALPACA_SECRET else '❌'}")
-print(f"  FINNHUB: {'✅' if FINNHUB_KEY else '❌'}\n")
+print(f"\n📊 ИТОГО:")
+print(f"  DEEPSEEK: {'✅' if DEEPSEEK_KEY else '❌'} ({len(DEEPSEEK_KEY)} симв.)")
+print(f"  ALPACA_API_KEY: {'✅' if ALPACA_KEY else '❌'} ({len(ALPACA_KEY)} симв.)")
+print(f"  ALPACA_SECRET_KEY: {'✅' if ALPACA_SECRET else '❌'} ({len(ALPACA_SECRET)} симв.)")
+print(f"  FINNHUB: {'✅' if FINNHUB_KEY else '❌'} ({len(FINNHUB_KEY)} симв.)")
+print(f"  Feed: {ALPACA_FEED.upper()}")
+print("=" * 70 + "\n")
 
 CONFIG = {
     'DEEPSEEK_API_KEY': DEEPSEEK_KEY,
@@ -120,14 +120,13 @@ def load_data_via_alpaca(tickers, days=60):
             )
             bars = client.get_stock_bars(request)
             
-            # Отладка первого батча
             if bn == 1:
-                print(f"    🔍 Debug первого батча: symbols in response = {len(bars)}")
+                print(f"    🔍 Debug батч 1: symbols in response = {len(bars)}")
                 if len(bars) > 0:
                     first_sym = list(bars.keys())[0]
                     print(f"    Пример: {first_sym} -> {len(bars[first_sym])} баров")
                 else:
-                    print(f"    ⚠️ Пустой ответ от Alpaca для первого батча!")
+                    print(f"    ⚠️ Пустой ответ от Alpaca!")
             
             for symbol in batch:
                 if symbol in bars and bars[symbol]:
@@ -349,7 +348,7 @@ class UltimateScanner:
         self.universe = self._load_universe()
     
     def _fetch_all_alpaca_assets(self) -> List[str]:
-        print("🔄 Загрузка активов через Alpaca API (с фильтром по биржам)...")
+        print("🔄 Загрузка активов через Alpaca API (NASDAQ, NYSE, ARCA)...")
         url = "https://paper-api.alpaca.markets/v2/assets"
         headers = {
             "APCA-API-KEY-ID": ALPACA_KEY,
@@ -358,7 +357,7 @@ class UltimateScanner:
         params = {
             "status": "active",
             "asset_class": "us_equity",
-            "exchange": "NASDAQ,NYSE,ARCA",  # основные биржи
+            "exchange": "NASDAQ,NYSE,ARCA",
             "tradable": "true"
         }
         all_tickers = []
@@ -372,7 +371,7 @@ class UltimateScanner:
                     all_tickers.append(symbol)
             print(f"   ✅ Получено {len(all_tickers)} активов")
         except Exception as e:
-            print(f"   ❌ Ошибка загрузки активов: {e}")
+            print(f"   ❌ Ошибка: {e}")
             all_tickers = ['AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC']
         return all_tickers
     
@@ -381,24 +380,24 @@ class UltimateScanner:
         cache_ttl = 86400
         if os.path.exists(cache) and (time.time() - os.path.getmtime(cache)) < cache_ttl:
             t = pd.read_csv(cache)['Symbol'].tolist()
-            print(f"✅ Загружено из кеша: {len(t)} тикеров")
+            print(f"✅ Из кеша: {len(t)} тикеров")
             return t
         
         tickers = self._fetch_all_alpaca_assets()
         if tickers:
             pd.DataFrame({'Symbol': tickers}).to_csv(cache, index=False)
-            print(f"💾 Сохранено в кеш: {len(tickers)} тикеров")
+            print(f"💾 В кеш: {len(tickers)} тикеров")
         else:
             if os.path.exists(cache):
                 tickers = pd.read_csv(cache)['Symbol'].tolist()
-                print(f"⚠️ Использую старый кеш: {len(tickers)} тикеров")
-        print(f"✅ ИТОГО в вселенной: {len(tickers)} тикеров")
+                print(f"⚠️ Старый кеш: {len(tickers)} тикеров")
+        print(f"✅ Вселенная: {len(tickers)} тикеров")
         return tickers
     
     def run(self) -> Dict:
         start = time.time()
         print("="*70)
-        print("🎯 ULTIMATE SCANNER v7.9")
+        print("🎯 ULTIMATE SCANNER v7.10")
         print("="*70)
         print(f"📊 Universe: {len(self.universe)} tickers")
         print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")

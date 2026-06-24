@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Railway Entry Point — v7.9 Manual Start"""
+"""Railway Entry Point — v7.10 Manual Start"""
 import os, sys, threading, time
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
