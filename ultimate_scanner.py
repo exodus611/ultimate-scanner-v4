@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.19 — FULL STABLE RELEASE
-Стабильная Alpaca + полные фильтры + DeepSeek AI
+ULTIMATE SCANNER v7.20 — NETWORK ROBUST
+User-Agent + рандомные задержки + очистка тикеров
 """
-import os, time, json, requests, traceback
+import os, time, json, requests, random
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -14,8 +14,13 @@ import warnings
 warnings.filterwarnings("ignore")
 
 print("=" * 60)
-print("ULTIMATE SCANNER v7.19 — FULL STABLE")
+print("ULTIMATE SCANNER v7.20 — NETWORK ROBUST")
 print("=" * 60)
+
+# User-Agent для обхода блокировок
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
 
 # ========== КОНФИГУРАЦИЯ ==========
 CONFIG = {
@@ -33,26 +38,32 @@ DEEPSEEK_KEY = os.environ.get('DEEPSEEK_API_KEY', '').strip()
 FINNHUB_KEY = os.environ.get('FINNHUB_API_KEY', '').strip()
 USE_ALPACA = bool(ALPACA_KEY and ALPACA_SECRET)
 
-print(f"Alpaca: {'✅' if USE_ALPACA else '❌'}")
+print(f"Alpaca key length: {len(ALPACA_KEY)}")
+print(f"Alpaca secret length: {len(ALPACA_SECRET)}")
 print(f"DeepSeek: {'✅' if DEEPSEEK_KEY else '❌'}")
-print(f"Finnhub: {'✅' if FINNHUB_KEY else '❌'}")
 
 # ========== ВСЕЛЕННАЯ ==========
 def load_universe():
     cache_file = 'universe_cache.csv'
     if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 86400:
         tickers = pd.read_csv(cache_file)['Symbol'].tolist()
+        tickers = [t.strip().upper() for t in tickers if t]
         print(f"✅ Вселенная из кеша: {len(tickers)} тикеров")
         return tickers
     
     if USE_ALPACA:
         print("🔄 Загрузка вселенной через Alpaca API...")
         try:
-            headers = {"APCA-API-KEY-ID": ALPACA_KEY, "APCA-API-SECRET-KEY": ALPACA_SECRET}
+            headers = {
+                "APCA-API-KEY-ID": ALPACA_KEY,
+                "APCA-API-SECRET-KEY": ALPACA_SECRET,
+                **HEADERS
+            }
             params = {"status": "active", "asset_class": "us_equity", "tradable": "true"}
             resp = requests.get("https://paper-api.alpaca.markets/v2/assets", headers=headers, params=params, timeout=30)
             resp.raise_for_status()
             tickers = [a['symbol'] for a in resp.json() if a.get('symbol')]
+            tickers = [t.strip().upper() for t in tickers if t]
             if tickers:
                 pd.DataFrame({'Symbol': tickers}).to_csv(cache_file, index=False)
                 print(f"  ✅ Alpaca: {len(tickers)} тикеров")
@@ -65,7 +76,7 @@ def load_universe():
     print(f"⚠️ Фолбэк: {len(tickers)} тикеров")
     return tickers
 
-# ========== ЗАГРУЗКА ДАННЫХ (ALPACA) ==========
+# ========== ЗАГРУЗКА ДАННЫХ ==========
 def load_data_alpaca(tickers, days=60):
     if not USE_ALPACA:
         return {}
@@ -74,10 +85,10 @@ def load_data_alpaca(tickers, days=60):
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
-    batch_size = 50
+    batch_size = 20
     total = (len(tickers) + batch_size - 1) // batch_size
     
-    print(f"📡 Загрузка {len(tickers)} тикеров через Alpaca (IEX)...")
+    print(f"📡 Alpaca: {len(tickers)} тикеров, батчей: {total}, size: {batch_size}")
     
     for i in range(0, len(tickers), batch_size):
         batch = tickers[i:i+batch_size]
@@ -104,41 +115,47 @@ def load_data_alpaca(tickers, days=60):
                     if len(df) >= 50:
                         all_data[symbol] = df
             
-            if bn % 20 == 0:
+            if bn % 50 == 0:
                 print(f"  {bn}/{total} батчей, загружено {len(all_data)} тикеров")
         except Exception as e:
             if bn == 1:
-                print(f"  ⚠️ Ошибка первого батча: {e}")
-            continue
+                print(f"  ⚠️ Alpaca batch 1 error: {e}")
         
-        time.sleep(0.5)  # rate limit
+        time.sleep(2.0)  # увеличенная пауза
     
-    print(f"✅ Alpaca загружено: {len(all_data)} тикеров")
+    print(f"✅ Alpaca: {len(all_data)} тикеров")
     return all_data
 
-# ========== ЗАГРУЗКА ДАННЫХ (YAHOO FALLBACK) ==========
 def load_data_yahoo(tickers, days=60):
-    print(f"📡 Yahoo Finance: {len(tickers)} тикеров...")
+    """Фолбэк с имитацией браузера"""
+    print(f"📡 Yahoo (robust): {len(tickers)} тикеров...")
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
-    chunk_size = 50
     
-    for i in range(0, len(tickers), chunk_size):
-        chunk = tickers[i:i+chunk_size]
+    for i, t in enumerate(tickers):
         try:
-            df = yf.download(chunk, start=start, end=end, progress=False, group_by='ticker', threads=True)
-            for t in chunk:
-                try:
-                    td = df if len(chunk) == 1 else df[t]
-                    if not td.empty and len(td) >= 50:
-                        all_data[t] = td.reset_index()
-                except:
-                    pass
-        except:
-            pass
+            # Пробрасываем сессию с заголовками
+            session = requests.Session()
+            session.headers.update(HEADERS)
+            
+            # Используем ticker напрямую
+            stock = yf.Ticker(t, session=session)
+            df = stock.history(start=start, end=end)
+            
+            if not df.empty and len(df) >= 50:
+                all_data[t] = df
+            
+            if (i+1) % 100 == 0:
+                print(f"  {i+1}/{len(tickers)}, loaded {len(all_data)}")
+            
+            time.sleep(random.uniform(0.5, 1.5))
+        except Exception as e:
+            if i == 0:
+                print(f"  ⚠️ Yahoo error on first ticker {t}: {e}")
+            continue
     
-    print(f"✅ Yahoo загружено: {len(all_data)} тикеров")
+    print(f"✅ Yahoo: {len(all_data)} тикеров")
     return all_data
 
 # ========== ИСТОЧНИКИ ДАННЫХ ДЛЯ СКОРИНГА ==========
@@ -163,7 +180,7 @@ class DataSources:
     
     def get_insider_activity(self, ticker):
         try:
-            r = requests.get("http://openinsider.com/screener", params={'t':ticker,'td':7,'xc':'1'}, timeout=10)
+            r = requests.get("http://openinsider.com/screener", params={'t':ticker,'td':7,'xc':'1'}, timeout=10, headers=HEADERS)
             tables = pd.read_html(r.content)
             if tables:
                 df = tables[-1]; buys = df[df['Value ($)']>50000]
@@ -251,8 +268,7 @@ class DeepSeekAI:
         self.client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com") if DEEPSEEK_KEY else None
     
     def analyze(self, ticker, data, mode):
-        if not self.client:
-            return {'type':'','physics':'','signal':''}
+        if not self.client: return {'type':'','physics':'','signal':''}
         mc = CONFIG[f'MODE_{mode}']
         prompt = (
             f"Senior Quant. Analyze {ticker} for {mc['name']}.\n"
@@ -269,21 +285,18 @@ class DeepSeekAI:
                 elif 'физика' in s.lower(): blocks['physics'] = s.split('\n',1)[-1].strip()
                 elif 'сигнал' in s.lower(): blocks['signal'] = s.split('\n',1)[-1].strip()
             return blocks
-        except:
-            return {'type':'','physics':'','signal':''}
+        except: return {'type':'','physics':'','signal':''}
 
 # ========== ГЛАВНЫЙ ЦИКЛ ==========
 def run_scanner():
     start_time = time.time()
     print("=" * 60)
-    print("🎯 ULTIMATE SCANNER v7.19")
+    print("🎯 ULTIMATE SCANNER v7.20")
     print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
     
-    # 1. Вселенная
     universe = load_universe()
     
-    # 2. Данные
     print("\n📥 Загрузка данных...")
     all_data = load_data_alpaca(universe, days=60)
     if not all_data:
@@ -296,7 +309,6 @@ def run_scanner():
     
     print(f"\n✅ Загружено: {len(all_data)} тикеров")
     
-    # 3. Фильтрация
     print("\n🔍 Фильтрация...")
     ds = DataSources()
     scorer = SignalScorer(ds)
@@ -316,7 +328,6 @@ def run_scanner():
         except: continue
     print(f"✅ После фильтра: {len(filtered)} тикеров")
     
-    # 4. Скоринг
     print(f"\n🔍 Скоринг {len(filtered)}...")
     results = []
     for i, t in enumerate(filtered, 1):
@@ -341,41 +352,29 @@ def run_scanner():
     mb.sort(key=lambda x: x['mode_b_score'], reverse=True)
     ta, tb = ma[:2], mb[:2]
     
-    # 5. AI
     print("\n🧠 DeepSeek AI...")
     for r in ta: r['ai'] = ai.analyze(r['ticker'], r, 'A')
     for r in tb: r['ai'] = ai.analyze(r['ticker'], r, 'B')
     
-    # 6. Сохранение
     ts = datetime.now().strftime('%Y%m%d_%H%M')
     output = {
-        'timestamp': ts,
-        'mode_a': ta, 'mode_b': tb,
-        'stats': {
-            'universe': len(universe),
-            'loaded': len(all_data),
-            'filtered': len(filtered),
-            'mode_a_total': len(ma),
-            'mode_b_total': len(mb),
-            'time': round(time.time()-start_time, 1)
-        }
+        'timestamp': ts, 'mode_a': ta, 'mode_b': tb,
+        'stats': {'universe': len(universe), 'loaded': len(all_data), 'filtered': len(filtered),
+                  'mode_a_total': len(ma), 'mode_b_total': len(mb), 'time': round(time.time()-start_time,1)}
     }
     
     with open('scan_results.json', 'w', encoding='utf-8') as f:
         json.dump(output, f, ensure_ascii=False, indent=2)
     
-    # 7. Вывод
     for label, arr, mode in [("🔴 MODE A: SNIPER", ma, 'A'), ("🟡 MODE B: TACTICAL", mb, 'B')]:
         print(f"\n{'='*60}")
         print(f"{label} (найдено {len(arr)})")
         print(f"{'='*60}")
-        if not arr:
-            print("  ⚪ Нет сигналов")
+        if not arr: print("  ⚪ Нет сигналов")
         else:
             for r in arr[:2]:
                 print(f"\n📈 {r['ticker']} | ${r['price']} | Score: {r[f'mode_{mode.lower()}_score']}")
-                for s in r[f'mode_{mode.lower()}_signals']:
-                    print(f"   {s}")
+                for s in r[f'mode_{mode.lower()}_signals']: print(f"   {s}")
                 if r.get('ai'):
                     if r['ai'].get('type'): print(f"🎯 {r['ai']['type']}")
                     if r['ai'].get('signal'): print(f"💥 {r['ai']['signal']}")
