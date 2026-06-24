@@ -1,33 +1,36 @@
 #!/usr/bin/env python3
+"""Railway Entry Point"""
 import os, sys, threading
 from datetime import datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
-from ultimate_scanner import UltimateScanner, DEEPSEEK_KEY
+
+from ultimate_scanner import run_scanner
 
 app = FastAPI(title="Scanner Dashboard")
-scan_results = {"signals": [], "stats": {}, "timestamp": ""}
+scan_results = {"mode_a": [], "mode_b": [], "stats": {}}
 scan_lock = threading.Lock()
 is_running = False
 
-def run_scanner():
+def scanner_task():
     global scan_results, is_running
     try:
-        scanner = UltimateScanner()
-        results = scanner.run()
+        results = run_scanner()
         with scan_lock:
             scan_results = results
     except Exception as e:
         print(f"❌ Scanner error: {e}")
-        import traceback; traceback.print_exc()
+        import traceback
+        traceback.print_exc()
     finally:
         is_running = False
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard():
-    return "<h1>Scanner v7.13</h1><p>POST /api/scan to start</p>"
+    return "<h1>Scanner v7.14</h1><p>POST /api/scan</p>"
 
 @app.get("/api/results")
 async def get_results():
@@ -36,18 +39,18 @@ async def get_results():
 
 @app.get("/api/health")
 async def health():
-    return {"status":"ok","timestamp":datetime.now().isoformat()}
+    return {"status": "ok", "timestamp": datetime.now().isoformat()}
 
 @app.post("/api/scan")
 async def trigger_scan():
     global is_running
     if is_running:
-        return {"status":"already_running"}
+        return {"status": "already_running"}
     is_running = True
-    threading.Thread(target=run_scanner, daemon=True).start()
-    return {"status":"started"}
+    threading.Thread(target=scanner_task, daemon=True).start()
+    return {"status": "started"}
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
-    print(f"🌐 Dashboard: http://0.0.0.0:{port}")
+    print(f"🌐 http://0.0.0.0:{port}")
     uvicorn.run(app, host="0.0.0.0", port=port)

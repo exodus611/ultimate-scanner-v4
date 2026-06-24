@@ -1,217 +1,267 @@
 #!/usr/bin/env python3
 """
-ULTIMATE SCANNER v7.13 — FIXED YFINANCE LOADING
+ULTIMATE SCANNER v7.14 — СТАБИЛЬНАЯ ВЕРСИЯ
 """
-import os, io, time, json, sys, traceback, requests
+import os, time, json
 import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
-from openai import OpenAI
-from typing import Dict, List
-from alpaca.data import StockHistoricalDataClient, StockBarsRequest, TimeFrame
-
-print("=" * 60)
-print("ULTIMATE SCANNER v7.13")
-print("=" * 60)
-
-# Настройка yfinance
-yf.set_tz_cache_location("cache/tz")
 import warnings
-warnings.filterwarnings("ignore", category=FutureWarning)
+warnings.filterwarnings("ignore")
 
-def get_env_final(var_name: str) -> str:
-    candidates = []
-    for k, v in os.environ.items():
-        if k == var_name:
-            candidates.append(v)
-    for val in candidates:
-        if val and val.strip() and len(val.strip()) > 10:
-            return val.strip()
-    return ""
+print("=" * 60)
+print("ULTIMATE SCANNER v7.14")
+print("=" * 60)
 
-DEEPSEEK_KEY = get_env_final('DEEPSEEK_API_KEY')
-ALPACA_KEY = get_env_final('ALPACA_API_KEY')
-ALPACA_SECRET = get_env_final('ALPACA_SECRET_KEY')
-FINNHUB_KEY = get_env_final('FINNHUB_API_KEY')
-USE_ALPACA = bool(ALPACA_KEY and ALPACA_SECRET)
-
-print(f"Keys: DEEPSEEK {'✅' if DEEPSEEK_KEY else '❌'}, ALPACA {'✅' if USE_ALPACA else '❌'}")
-
+# ========== КОНФИГУРАЦИЯ ==========
 CONFIG = {
-    'DEEPSEEK_API_KEY': DEEPSEEK_KEY,
-    'ALPACA_API_KEY': ALPACA_KEY,
-    'ALPACA_SECRET_KEY': ALPACA_SECRET,
-    'FINNHUB_API_KEY': FINNHUB_KEY,
-    'MODE_A': {'name': 'SNIPER', 'position_size': 2000, 'target_pct': 0.40, 'stop_pct': 0.05, 'min_score': 75, 'top_n': 2},
-    'MODE_B': {'name': 'TACTICAL', 'position_size': 1000, 'target_pct': 0.20, 'stop_pct': 0.05, 'min_score': 55, 'top_n': 2},
-    'MIN_PRICE': 3.0, 'MIN_VOLUME': 200_000,
+    'MODE_A': {'name': 'SNIPER', 'min_score': 75, 'top_n': 2},
+    'MODE_B': {'name': 'TACTICAL', 'min_score': 55, 'top_n': 2},
+    'MIN_PRICE': 3.0,
+    'MIN_VOLUME': 200_000,
 }
 
-def load_data_yfinance(tickers, days=60):
-    """Загрузка через Yahoo Finance небольшими порциями с повторными попытками"""
-    print(f"  📡 Yahoo Finance: {len(tickers)} тикеров (чанками по 50)...")
+# ========== ЗАГРУЗКА ДАННЫХ ==========
+def load_data(tickers, days=60):
+    """Загрузка через Yahoo Finance чанками по 50"""
+    print(f"📡 Загрузка {len(tickers)} тикеров...")
     end = datetime.now()
     start = end - timedelta(days=days)
     all_data = {}
     chunk_size = 50
-    total_chunks = (len(tickers) + chunk_size - 1) // chunk_size
     
     for i in range(0, len(tickers), chunk_size):
         chunk = tickers[i:i+chunk_size]
         cn = i // chunk_size + 1
         
-        if cn % 20 == 0:
-            print(f"    Chunk {cn}/{total_chunks}, loaded {len(all_data)} tickers so far", flush=True)
-        
-        for attempt in range(3):  # 3 попытки
-            try:
-                df = yf.download(
-                    chunk,
-                    start=start,
-                    end=end,
-                    progress=False,
-                    group_by='ticker',
-                    threads=True,
-                    timeout=30
-                )
-                
-                if df.empty:
-                    if attempt < 2:
-                        time.sleep(2)
-                        continue
-                    break
-                
-                for t in chunk:
-                    try:
-                        if len(chunk) == 1:
-                            ticker_df = df
-                        else:
-                            ticker_df = df[t]
-                        
-                        if not ticker_df.empty and len(ticker_df) >= 30:
-                            ticker_df = ticker_df.reset_index()
-                            # Приводим к нужному формату
-                            cols = {
-                                'Date': 'Date',
-                                'Open': 'Open',
-                                'High': 'High',
-                                'Low': 'Low',
-                                'Close': 'Close',
-                                'Volume': 'Volume'
-                            }
-                            ticker_df = ticker_df.rename(columns={
-                                c: cols.get(c, c) for c in ticker_df.columns
-                            })
-                            all_data[t] = ticker_df[['Date','Open','High','Low','Close','Volume']]
-                    except:
-                        continue
-                break  # успешно — выходим из цикла попыток
-                
-            except Exception as e:
-                if attempt < 2:
-                    time.sleep(2)
-                else:
-                    if cn == 1:
-                        print(f"    ⚠️ Yahoo error on first chunk: {e}")
+        try:
+            df = yf.download(chunk, start=start, end=end, progress=False, group_by='ticker', threads=True)
+            
+            for t in chunk:
+                try:
+                    if len(chunk) == 1:
+                        td = df
+                    else:
+                        td = df[t]
+                    
+                    if not td.empty and len(td) >= 30:
+                        td = td.reset_index()
+                        all_data[t] = td
+                except:
+                    pass
+            
+            if cn % 10 == 0:
+                print(f"  {cn}/{(len(tickers)+chunk_size-1)//chunk_size} чанков, загружено {len(all_data)} тикеров")
+        except Exception as e:
+            print(f"  ⚠️ Ошибка чанка {cn}: {e}")
+            time.sleep(2)
     
-    print(f"    ✅ Yahoo loaded: {len(all_data)} tickers")
+    print(f"✅ Загружено: {len(all_data)} тикеров")
     return all_data
 
-class UltimateScanner:
-    def __init__(self):
-        self.ai = DeepSeekAnalyzer(CONFIG['DEEPSEEK_API_KEY']) if DEEPSEEK_KEY else None
-        self.universe = self._load_universe()
+# ========== ФИЛЬТР ==========
+def find_springs(data):
+    """Поиск "пружин" — акции в нижней части диапазона с повышенным объёмом"""
+    signals = []
     
-    def _load_universe(self):
-        # Загружаем только основные тикеры
-        tickers = [
-            'AAPL','MSFT','GOOGL','AMZN','NVDA','META','TSLA','AMD','INTC',
-            'PYPL','SQ','COIN','PLTR','SOFI','UBER','LYFT','ABNB','DASH',
-            'ROKU','ZM','NFLX','QCOM','AVGO','CRM','ADBE','ORCL','CSCO',
-            'SNOW','DDOG','NET','MDB','CRWD','ZS','PANW','FTNT','NOW',
-            'BA','CAT','GE','F','GM','TSLA','NIO','RIVN','LCID',
-            'JPM','BAC','WFC','GS','MS','C','V','MA','AXP',
-            'XOM','CVX','COP','EOG','PXD','SLB','OXY',
-            'JNJ','PFE','MRK','ABT','TMO','DHR',
-            'WMT','TGT','COST','HD','LOW','MCD','SBUX',
-            'DIS','NKE','LULU','ULTA',
-            'SPY','QQQ','IWM','DIA','TLT','GLD','SLV','USO',
-        ]
-        # Убираем дубликаты
-        tickers = list(set(tickers))
-        print(f"✅ Universe: {len(tickers)} tickers (S&P 500 + popular)")
+    for t, df in data.items():
+        try:
+            close = df['Close'].iloc[-1]
+            volume = df['Volume'].iloc[-1]
+            avg_volume = df['Volume'].tail(20).mean()
+            
+            # Базовые фильтры
+            if close < CONFIG['MIN_PRICE'] or avg_volume < CONFIG['MIN_VOLUME']:
+                continue
+            
+            # Позиция в 60-дневном диапазоне
+            high_60 = df['High'].tail(60).max()
+            low_60 = df['Low'].tail(60).min()
+            
+            if high_60 <= low_60:
+                continue
+            
+            position = (close - low_60) / (high_60 - low_60) * 100
+            discount = (close - high_60) / high_60 * 100
+            
+            # Объём относительно среднего
+            rvol = volume / avg_volume if avg_volume > 0 else 0
+            
+            # HOD Pinch (закрытие близко к максимуму дня)
+            high_day = df['High'].iloc[-1]
+            pinch = (high_day - close) / high_day * 100 if high_day > 0 else 0
+            
+            # === MODE A: SNIPER (инсайдерские сигналы) ===
+            # Ищем: позиция 20-50%, RVOL > 2, закрытие у хая дня
+            mode_a_score = 0
+            mode_a_signals = []
+            
+            if 20 <= position <= 50:
+                mode_a_score += 30
+                mode_a_signals.append(f"📍 Позиция {position:.0f}% (нижняя половина)")
+            
+            if rvol > 2.0:
+                mode_a_score += 25
+                mode_a_signals.append(f"📈 RVOL: {rvol:.1f}x")
+            
+            if pinch < 2:
+                mode_a_score += 15
+                mode_a_signals.append(f"🎯 HOD Pinch: {pinch:.1f}%")
+            
+            if discount < -10:
+                mode_a_score += 20
+                mode_a_signals.append(f"📉 Дисконт: {discount:.1f}%")
+            
+            # === MODE B: TACTICAL (трендовые) ===
+            mode_b_score = 0
+            mode_b_signals = []
+            
+            if 50 <= position <= 85:
+                mode_b_score += 30
+                mode_b_signals.append(f"📍 Позиция {position:.0f}% (верхняя половина)")
+            
+            if rvol > 1.5:
+                mode_b_score += 25
+                mode_b_signals.append(f"📈 RVOL: {rvol:.1f}x")
+            
+            if pinch < 3:
+                mode_b_score += 15
+                mode_b_signals.append(f"🎯 HOD Pinch: {pinch:.1f}%")
+            
+            if mode_a_score >= CONFIG['MODE_A']['min_score'] or mode_b_score >= CONFIG['MODE_B']['min_score']:
+                signals.append({
+                    'ticker': t,
+                    'price': round(close, 2),
+                    'position_pct': round(position, 1),
+                    'discount_pct': round(discount, 1),
+                    'rvol': round(rvol, 2),
+                    'hod_pinch': round(pinch, 1),
+                    'mode_a_score': mode_a_score,
+                    'mode_a_signals': mode_a_signals,
+                    'mode_a_qualifies': mode_a_score >= CONFIG['MODE_A']['min_score'],
+                    'mode_b_score': mode_b_score,
+                    'mode_b_signals': mode_b_signals,
+                    'mode_b_qualifies': mode_b_score >= CONFIG['MODE_B']['min_score'],
+                })
+        except:
+            continue
+    
+    return signals
+
+# ========== ВСЕЛЕННАЯ ==========
+def load_universe():
+    """Загрузка списка тикеров (S&P 500 + Nasdaq-100 + популярные)"""
+    cache_file = 'universe_cache.csv'
+    
+    if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) < 86400:
+        tickers = pd.read_csv(cache_file)['Symbol'].tolist()
+        print(f"✅ Вселенная из кеша: {len(tickers)} тикеров")
         return tickers
     
-    def run(self):
-        start_time = time.time()
-        print("=" * 60)
-        print("🎯 ULTIMATE SCANNER v7.13")
-        print("=" * 60)
-        print(f"📊 Universe: {len(self.universe)} tickers")
-        
-        # Загрузка данных
-        all_data = load_data_yfinance(self.universe, days=60)
-        if not all_data:
-            print("❌ Не удалось загрузить данные ни из одного источника.")
-            return {"mode_a": [], "mode_b": [], "stats": {}}
-        
-        print(f"\n✅ Loaded: {len(all_data)} tickers")
-        
-        # Простейший фильтр
-        print("\n🔍 Filtering...")
-        signals = []
-        for t, df in all_data.items():
-            try:
-                close = df['Close'].iloc[-1]
-                volume = df['Volume'].tail(20).mean()
-                if close < CONFIG['MIN_PRICE'] or volume < CONFIG['MIN_VOLUME']:
-                    continue
-                
-                # Простой сигнал: цена в нижней половине 60-дневного диапазона + объём выше среднего
-                high_60 = df['High'].max()
-                low_60 = df['Low'].min()
-                position = (close - low_60) / (high_60 - low_60) * 100 if high_60 > low_60 else 50
-                rvol = df['Volume'].iloc[-1] / volume if volume > 0 else 0
-                
-                if 20 <= position <= 50 and rvol > 1.5:
-                    signals.append({
-                        'ticker': t,
-                        'price': round(close, 2),
-                        'position': round(position, 1),
-                        'rvol': round(rvol, 2),
-                    })
-            except:
-                continue
-        
-        print(f"✅ Found {len(signals)} potential signals")
-        
-        # Вывод результатов
-        signals.sort(key=lambda x: x['rvol'], reverse=True)
-        top_signals = signals[:10]
-        
-        output = {
-            'timestamp': datetime.now().strftime('%Y%m%d_%H%M'),
-            'signals': top_signals,
-            'stats': {
-                'universe_size': len(self.universe),
-                'loaded': len(all_data),
-                'signals_found': len(signals),
-                'scan_time_sec': round(time.time() - start_time, 1)
-            }
+    print("🔄 Загрузка вселенной...")
+    tickers = []
+    
+    # S&P 500 через Wikipedia
+    try:
+        sp500 = pd.read_html('https://en.wikipedia.org/wiki/List_of_S%26P_500_companies')[0]
+        tickers.extend(sp500['Symbol'].tolist())
+        print(f"  S&P 500: {len(sp500)} тикеров")
+    except:
+        pass
+    
+    # Nasdaq-100 через Wikipedia
+    try:
+        nasdaq = pd.read_html('https://en.wikipedia.org/wiki/Nasdaq-100')[4]
+        tickers.extend(nasdaq['Ticker'].tolist())
+        print(f"  Nasdaq-100: {len(nasdaq)} тикеров")
+    except:
+        pass
+    
+    # Убираем дубликаты, точку в тикерах BRK.B и т.п.
+    tickers = list(set([t.replace('.', '-') for t in tickers if isinstance(t, str)]))
+    
+    pd.DataFrame({'Symbol': tickers}).to_csv(cache_file, index=False)
+    print(f"✅ Вселенная: {len(tickers)} тикеров")
+    return tickers
+
+# ========== ГЛАВНЫЙ ЦИКЛ ==========
+def run_scanner():
+    start_time = time.time()
+    
+    print("=" * 60)
+    print("🎯 ULTIMATE SCANNER v7.14")
+    print(f"⏰ {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    print("=" * 60)
+    
+    # 1. Вселенная
+    universe = load_universe()
+    
+    # 2. Данные
+    data = load_data(universe, days=60)
+    if not data:
+        print("❌ Нет данных")
+        return {"mode_a": [], "mode_b": [], "stats": {}}
+    
+    # 3. Сигналы
+    print("\n🔍 Поиск сигналов...")
+    signals = find_springs(data)
+    
+    ma = [s for s in signals if s['mode_a_qualifies']]
+    mb = [s for s in signals if s['mode_b_qualifies'] and not s['mode_a_qualifies']]
+    
+    ma.sort(key=lambda x: x['mode_a_score'], reverse=True)
+    mb.sort(key=lambda x: x['mode_b_score'], reverse=True)
+    
+    ta = ma[:CONFIG['MODE_A']['top_n']]
+    tb = mb[:CONFIG['MODE_B']['top_n']]
+    
+    print(f"\n🎯 MODE A (SNIPER): найдено {len(ma)}, топ-{len(ta)}")
+    print(f"⚡ MODE B (TACTICAL): найдено {len(mb)}, топ-{len(tb)}")
+    
+    # 4. Вывод
+    ts = datetime.now().strftime('%Y%m%d_%H%M')
+    output = {
+        'timestamp': ts,
+        'mode_a': ta,
+        'mode_b': tb,
+        'stats': {
+            'universe_size': len(universe),
+            'loaded': len(data),
+            'filtered': len(signals),
+            'mode_a_total': len(ma),
+            'mode_b_total': len(mb),
+            'scan_time_sec': round(time.time() - start_time, 1)
         }
-        
-        with open('scan_results.json', 'w', encoding='utf-8') as f:
-            json.dump(output, f, ensure_ascii=False, indent=2)
-        
-        print("\n" + "=" * 60)
-        print("🔴 TOP SIGNALS (пружины перед движением)")
-        print("=" * 60)
-        for s in top_signals[:5]:
-            print(f"📈 {s['ticker']} | ${s['price']} | Pos: {s['position']}% | RVOL: {s['rvol']}x")
-        
-        print(f"\n💾 Saved: scan_results.json | ⏱️ {time.time() - start_time:.1f} sec")
-        return output
+    }
+    
+    with open('scan_results.json', 'w', encoding='utf-8') as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+    
+    print("\n" + "=" * 60)
+    print("🔴 MODE A: SNIPER")
+    print("=" * 60)
+    if not ta:
+        print("  ⚪ Нет сигналов")
+    else:
+        for s in ta:
+            print(f"\n📈 {s['ticker']} | ${s['price']} | Score: {s['mode_a_score']}")
+            for sig in s['mode_a_signals']:
+                print(f"   {sig}")
+    
+    print("\n" + "=" * 60)
+    print("🟡 MODE B: TACTICAL")
+    print("=" * 60)
+    if not tb:
+        print("  ⚪ Нет сигналов")
+    else:
+        for s in tb:
+            print(f"\n📈 {s['ticker']} | ${s['price']} | Score: {s['mode_b_score']}")
+            for sig in s['mode_b_signals']:
+                print(f"   {sig}")
+    
+    print(f"\n💾 scan_results.json | ⏱️ {time.time() - start_time:.1f} сек")
+    return output
 
 if __name__ == "__main__":
-    pass
+    run_scanner()
